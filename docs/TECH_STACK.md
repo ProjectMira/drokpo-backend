@@ -33,6 +33,8 @@ You asked for "Firebase" as the deployment target. Firebase itself doesn't host 
 
 We use **option 2**: [backend/Dockerfile](../backend/Dockerfile) builds the container, `gcloud run deploy` ships it, and the `hosting.rewrites` block in [firebase.json](../firebase.json) maps `/api/**` on your Firebase Hosting domain to that Cloud Run service. Hosting forwards the path *unstripped*, so FastAPI mounts every router under a matching `/api` prefix ([main.py](../backend/app/main.py)) — the full path of an endpoint is e.g. `GET /api/profile/me`, both through Hosting and against the Cloud Run URL directly. End result: it still deploys and serves through Firebase, just with a real container runtime instead of a function.
 
+This deploy happens automatically on every push to `main` — see [DEPLOYMENT.md](DEPLOYMENT.md) for the GitHub Actions workflow and the one-time GCP setup it requires.
+
 ## Firebase Authentication
 
 Handles sign-up/sign-in so the backend never touches passwords or OTP codes directly. Phone number + OTP is the recommended primary method for this app (matches how most dating apps and the target user base already verify identity); Google sign-in can be added as a secondary option — both are toggled in the Firebase console with no backend code changes, since the backend only ever deals with the verified ID token.

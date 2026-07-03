@@ -1,0 +1,82 @@
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "functions/**"
+      - "firebase.json"
+      - "firestore.rules"
+      - "firestore.indexes.json"
+      - "storage.rules"
+      - "public/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch: {}
+
+env:
+  GCP_REGION: us-central1
+  CLOUD_RUN_SERVICE: changsa-api
+
+# Queue deploys instead of racing two pushes against the same Cloud Run
+# service / Firebase project.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy-cloud-run:
+    name: Deploy FastAPI to Cloud Run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --source backend \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --region "$GCP_REGION" \
+            --allow-unauthenticated \
+            --set-env-vars "FIREBASE_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},STORAGE_BUCKET=${{ secrets.GCP_PROJECT_ID }}.appspot.com"
+
+  deploy-firebase:
+    name: Deploy Hosting, Firestore/Storage rules, Functions
+    needs: deploy-cloud-run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Deploy Firebase config
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+        run: |
+          firebase deploy \
+            --only hosting,firestore,storage,functions \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --non-interactive

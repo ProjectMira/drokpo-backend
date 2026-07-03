@@ -22,9 +22,13 @@ All routes are mounted under `/api` (e.g. `GET /api/profile/me`, `POST /api/swip
 
 ## Photo upload flow
 
-Photos are uploaded directly from the client to Firebase Storage using the Firebase SDK (not through this API), to path `users/{uid}/photos/{photoId}.jpg`. `storage.rules` restricts writes to the owning uid. After upload, the client calls `POST /onboarding/photos/confirm` (or `POST /profile/me/photos`) with the `storagePath` so the backend can verify the blob exists and record it on the user's profile.
+Photos are uploaded directly from the client to Firebase Storage using the Firebase SDK (not through this API), to path `users/{uid}/photos/{photoId}.jpg`. `storage.rules` restricts writes to the owning uid. After upload, the client calls `POST /api/onboarding/photos/confirm` (or `POST /api/profile/me/photos`) with the `storagePath` so the backend can verify the blob exists and record it on the user's profile.
 
 ## Deploying
+
+Pushing to `main` deploys automatically via [.github/workflows/deploy-backend.yml](../.github/workflows/deploy-backend.yml) — see [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md) for the one-time GCP/GitHub secrets setup it needs.
+
+To deploy by hand instead:
 
 ```bash
 # Build and deploy the API container to Cloud Run
