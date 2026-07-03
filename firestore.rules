@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // The FastAPI backend uses the Admin SDK, which bypasses these rules
+    // entirely. Rules below only govern direct client SDK access. All
+    // profile/feed/swipe writes go through the backend API so its
+    // validation (onboarding gating, server-computed geohash, photo
+    // ownership, photo cap) cannot be bypassed; matched-chat reads/writes
+    // go directly through the client SDK for real-time updates.
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow write: if false;
+
+      match /swipes/{targetUid} {
+        allow read, write: if false;
+      }
+    }
+
+    match /matches/{matchId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.users;
+      allow write: if false;
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn()
+                    && request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.users;
+        allow create: if isSignedIn()
+                      && request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.users
+                      && get(/databases/$(database)/documents/matches/$(matchId)).data.status == "active"
+                      && request.resource.data.senderId == request.auth.uid;
+        allow update, delete: if false;
+      }
+    }
+
+    match /reports/{reportId} {
+      allow read, write: if false;
+    }
+
+    match /blocks/{uid}/blockedUsers/{blockedUid} {
+      allow read: if isOwner(uid);
+      allow write: if false;
+    }
+
+    // blocks/{uid}/blockedBy/* is intentionally unreadable even by the
+    // owner (deny-by-default): users must not be able to discover who
+    // blocked them. Only the backend reads it, for feed filtering.
+  }
+}

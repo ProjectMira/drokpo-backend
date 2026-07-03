@@ -1,0 +1,24 @@
+{
+  "hosting": {
+    "public": "public",
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "run": {
+          "serviceId": "changsa-api",
+          "region": "us-central1"
+        }
+      }
+    ]
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "functions": {
+    "source": "functions"
+  }
+}
