@@ -64,7 +64,8 @@ In the repo's GitHub Settings → Secrets and variables → Actions, add:
 | Secret | Value |
 |---|---|
 | `GCP_SA_KEY` | The full contents of `changsa-deployer-key.json` |
-| `GCP_PROJECT_ID` | Your Firebase/GCP project ID |
+| `GCP_PROJECT_ID` | Your Firebase/GCP project ID (e.g. `changsa-prod`) |
+| `STORAGE_BUCKET` | Your default Storage bucket name — check Firebase Console → Storage rather than assuming a pattern; bucket naming changed from `<project-id>.appspot.com` to `<project-id>.firebasestorage.app` for projects created after October 2024 |
 
 Delete `changsa-deployer-key.json` locally after pasting it in — it's a live credential.
 

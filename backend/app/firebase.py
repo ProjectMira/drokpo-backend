@@ -6,7 +6,7 @@ from firebase_admin import credentials, firestore, storage
 from app.config import settings
 
 
-def _ensure_app() -> None:
+def ensure_app() -> None:
     if firebase_admin._apps:
         return
     if settings.google_application_credentials:
@@ -25,11 +25,11 @@ def _ensure_app() -> None:
 
 @lru_cache
 def get_firestore():
-    _ensure_app()
+    ensure_app()
     return firestore.client()
 
 
 @lru_cache
 def get_bucket():
-    _ensure_app()
+    ensure_app()
     return storage.bucket()

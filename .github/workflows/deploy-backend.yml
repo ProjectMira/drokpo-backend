@@ -48,7 +48,7 @@ jobs:
             --project "${{ secrets.GCP_PROJECT_ID }}" \
             --region "$GCP_REGION" \
             --allow-unauthenticated \
-            --set-env-vars "FIREBASE_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},STORAGE_BUCKET=${{ secrets.GCP_PROJECT_ID }}.appspot.com"
+            --set-env-vars "FIREBASE_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},STORAGE_BUCKET=${{ secrets.STORAGE_BUCKET }}"
 
   deploy-firebase:
     name: Deploy Hosting, Firestore/Storage rules, Functions
@@ -69,8 +69,21 @@ jobs:
         with:
           node-version: "20"
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
+
+      - name: Set up Python functions venv
+        # The Firebase CLI analyzes Python function source locally before
+        # deploying and requires this venv to exist at functions/venv.
+        run: |
+          cd functions
+          python3.12 -m venv venv
+          source venv/bin/activate
+          pip install -r requirements.txt
 
       - name: Deploy Firebase config
         env:

@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .env
 .venv
+functions/venv/
 service-account.json
 .firebase/
 firebase-debug.log
