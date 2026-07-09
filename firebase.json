@@ -5,7 +5,7 @@
       {
         "source": "/api/**",
         "run": {
-          "serviceId": "changsa-api",
+          "serviceId": "drokpo-api",
           "region": "us-central1"
         }
       }

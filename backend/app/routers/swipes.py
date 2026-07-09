@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.dependencies import get_current_uid
 from app.models.swipe import SwipeIn
@@ -6,6 +8,16 @@ from app.services import matching as matching_service
 from app.services.matching import BlockedError
 
 router = APIRouter(prefix="/swipes", tags=["swipes"])
+
+
+@router.get("")
+def list_swipes(
+    uid: str = Depends(get_current_uid),
+    action: Literal["like", "pass", "superlike"] | None = Query(default=None),
+    limit: int = Query(default=100, le=500),
+):
+    # e.g. GET /api/swipes?action=like returns every like the caller has sent.
+    return {"swipes": matching_service.list_swipes(uid, action, limit)}
 
 
 @router.post("/{target_uid}")

@@ -70,3 +70,11 @@ def record_swipe(from_uid: str, to_uid: str, action: str) -> str | None:
         raise BlockedError("Cannot swipe on this user")
     transaction = db.transaction()
     return _swipe_transaction(transaction, db, from_uid, to_uid, action)
+
+
+def list_swipes(uid: str, action: str | None = None, limit: int = 100) -> list[dict]:
+    db = get_firestore()
+    query = db.collection("users").document(uid).collection("swipes")
+    if action:
+        query = query.where("action", "==", action)
+    return [{"uid": doc.id, **doc.to_dict()} for doc in query.limit(limit).stream()]

@@ -16,7 +16,7 @@ on:
 
 env:
   GCP_REGION: us-central1
-  CLOUD_RUN_SERVICE: changsa-api
+  CLOUD_RUN_SERVICE: drokpo-api
 
 # Queue deploys instead of racing two pushes against the same Cloud Run
 # service / Firebase project.

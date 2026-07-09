@@ -2,7 +2,7 @@
 
 Pushing to `main` runs [.github/workflows/deploy-backend.yml](../.github/workflows/deploy-backend.yml), which:
 
-1. **Deploys the FastAPI app to Cloud Run** — `gcloud run deploy --source backend`, which builds [backend/Dockerfile](../backend/Dockerfile) via Cloud Build and ships it as the `changsa-api` service in `us-central1`.
+1. **Deploys the FastAPI app to Cloud Run** — `gcloud run deploy --source backend`, which builds [backend/Dockerfile](../backend/Dockerfile) via Cloud Build and ships it as the `drokpo-api` service in `us-central1`.
 2. **Deploys Firebase config** — Firebase Hosting (the `/api/**` rewrite to that Cloud Run service), Firestore rules/indexes, Storage rules, and the Cloud Functions in `functions/`.
 
 The two are separate jobs with the second depending on the first (`needs: deploy-cloud-run`), because Firebase Hosting validates that the Cloud Run service referenced by a rewrite already exists — on a first-ever deploy, deploying Firebase config before the Cloud Run service exists would fail. The workflow only triggers on changes under `backend/**`, `functions/**`, or the Firebase config files — an unrelated doc change won't trigger a deploy. `workflow_dispatch` is enabled too, for a manual re-run.
@@ -14,11 +14,11 @@ The two are separate jobs with the second depending on the first (`needs: deploy
 In the Google Cloud project backing your Firebase project:
 
 ```bash
-gcloud iam service-accounts create changsa-deployer \
-  --display-name="Changsa CI deployer"
+gcloud iam service-accounts create drokpo-deployer \
+  --display-name="Drokpo CI deployer"
 
 PROJECT_ID=your-project-id
-SA_EMAIL=changsa-deployer@${PROJECT_ID}.iam.gserviceaccount.com
+SA_EMAIL=drokpo-deployer@${PROJECT_ID}.iam.gserviceaccount.com
 
 for role in \
   roles/run.admin \
@@ -55,7 +55,7 @@ gcloud services enable \
 ### 3. Generate the key and add GitHub secrets
 
 ```bash
-gcloud iam service-accounts keys create changsa-deployer-key.json \
+gcloud iam service-accounts keys create drokpo-deployer-key.json \
   --iam-account="$SA_EMAIL"
 ```
 
@@ -63,11 +63,11 @@ In the repo's GitHub Settings → Secrets and variables → Actions, add:
 
 | Secret | Value |
 |---|---|
-| `GCP_SA_KEY` | The full contents of `changsa-deployer-key.json` |
-| `GCP_PROJECT_ID` | Your Firebase/GCP project ID (e.g. `changsa-prod`) |
+| `GCP_SA_KEY` | The full contents of `drokpo-deployer-key.json` |
+| `GCP_PROJECT_ID` | Your Firebase/GCP project ID (`drokpo-backend`) |
 | `STORAGE_BUCKET` | Your default Storage bucket name — check Firebase Console → Storage rather than assuming a pattern; bucket naming changed from `<project-id>.appspot.com` to `<project-id>.firebasestorage.app` for projects created after October 2024 |
 
-Delete `changsa-deployer-key.json` locally after pasting it in — it's a live credential.
+Delete `drokpo-deployer-key.json` locally after pasting it in — it's a live credential.
 
 ### 4. First deploy
 

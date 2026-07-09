@@ -1,8 +1,8 @@
 from fastapi import APIRouter, FastAPI
 
-from app.routers import feed, matches, onboarding, profile, reports, swipes
+from app.routers import feed, matches, messages, onboarding, profile, reports, swipes
 
-app = FastAPI(title="Changsa API")
+app = FastAPI(title="Drokpo API")
 
 # Firebase Hosting rewrites /api/** to this service and forwards the path
 # unstripped, so every route must live under /api to be reachable through
@@ -13,6 +13,7 @@ api.include_router(profile.router)
 api.include_router(feed.router)
 api.include_router(swipes.router)
 api.include_router(matches.router)
+api.include_router(messages.router)
 api.include_router(reports.router)
 app.include_router(api)
 

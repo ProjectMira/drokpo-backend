@@ -1,6 +1,6 @@
 {
   "projects": {
-    "default": "changsa-prod"
+    "default": "drokpo-backend"
   },
   "targets": {},
   "etags": {}

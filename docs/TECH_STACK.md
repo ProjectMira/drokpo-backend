@@ -1,6 +1,6 @@
 # Tech Stack
 
-This document explains every backend service the Changsa app is built on, what it's used for, and why it was chosen over the alternatives. Code references point at the actual files in this repo.
+This document explains every backend service the Drokpo app is built on, what it's used for, and why it was chosen over the alternatives. Code references point at the actual files in this repo.
 
 ## Summary table
 
@@ -37,7 +37,7 @@ This deploy happens automatically on every push to `main` — see [DEPLOYMENT.md
 
 ## Firebase Authentication
 
-Handles sign-up/sign-in so the backend never touches passwords or OTP codes directly. Phone number + OTP is the recommended primary method for this app (matches how most dating apps and the target user base already verify identity); Google sign-in can be added as a secondary option — both are toggled in the Firebase console with no backend code changes, since the backend only ever deals with the verified ID token.
+Handles sign-up/sign-in so the backend never touches passwords or OTP codes directly. Phone number + OTP is the recommended primary method for this app (a familiar sign-in flow for the target user base and a light identity check that keeps the community real); Google sign-in can be added as a secondary option — both are toggled in the Firebase console with no backend code changes, since the backend only ever deals with the verified ID token.
 
 Flow:
 1. Client signs in using the Firebase client SDK (phone/OTP or Google).

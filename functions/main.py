@@ -29,7 +29,7 @@ def on_match_created(event: firestore_fn.Event) -> None:
     data = event.data.to_dict() or {}
     db = firestore.client()
     tokens = _tokens_for(db, data.get("users", []))
-    _send(tokens, "It's a match!", "You have a new match on Changsa.")
+    _send(tokens, "You made a new friend!", "You have a new connection on Drokpo — say tashi delek!")
 
 
 @firestore_fn.on_document_created(document="matches/{matchId}/messages/{messageId}")

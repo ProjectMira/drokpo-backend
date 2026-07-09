@@ -35,16 +35,17 @@ The profile document. One per Firebase Auth account, created by `POST /onboardin
 | Field | Type | Written by | Notes |
 |---|---|---|---|
 | `displayName` | string | onboarding, profile update | |
-| `dob` | string | onboarding only | Plain ISO date string (`"1998-04-12"`), not a Firestore Timestamp — never overwritten after onboarding |
-| `gender` | string | onboarding only | No edit endpoint currently exposes this after onboarding |
-| `seekingGenders` | array\<string\> | onboarding, profile update | The single source of truth for gender intent — drives the feed's gender filter in `get_candidates` |
+| `dob` | string | onboarding, profile update | Plain ISO date string (`"1998-04-12"`), not a Firestore Timestamp |
+| `gender` | string \| null | onboarding, profile update | Optional profile info — not used to filter the feed |
+| `interests` | array\<string\> | onboarding, profile update | Free-text tags (e.g. "momo cooking", "gorshey", "hiking") — drives the feed's shared-interest ranking in `get_candidates` |
+| `socials` | map `{ instagram: string, youtube?, tiktok?, facebook?, x?, wechat? }` | onboarding, profile update | `instagram` is **required** at onboarding and can be changed but never cleared (validated in [user.py](../backend/app/models/user.py)); other platforms are optional. Partial updates merge via dotted paths (`socials.youtube`) so omitted platforms are untouched |
 | `bio` | string | onboarding, profile update | |
 | `occupation` | string | profile update only | Not collected at onboarding, only editable afterward |
 | `education` | string | profile update only | Same as `occupation` |
 | `region` | string | onboarding, profile update | Free text, e.g. "U-Tsang", "Kham", "Amdo", or a diaspora city |
 | `languages` | array\<string\> | onboarding, profile update | |
-| `location` | map `{ lat: number, lng: number, geohash: string }` | onboarding only | `geohash` is computed server-side ([geo.py](../backend/app/services/geo.py)); there's currently no endpoint to update location after onboarding |
-| `preferences` | map `{ ageMin: number, ageMax: number, distanceKm: number }` | onboarding, profile update | `ageMin`/`ageMax` drive the feed's age filter. Partial updates merge via dotted field paths (`preferences.ageMin`), so sending only `distanceKm` does not reset the others. Gender intent lives in `seekingGenders`, not here |
+| `location` | map `{ lat: number, lng: number, geohash: string }` | onboarding, profile update | `geohash` is always recomputed server-side ([geo.py](../backend/app/services/geo.py)) — a client sends only lat/lng and can never desync the geohash |
+| `preferences` | map `{ ageMin: number, ageMax: number, distanceKm: number }` | onboarding, profile update | `ageMin`/`ageMax` drive the feed's age filter. Partial updates merge via dotted field paths (`preferences.ageMin`), so sending only `distanceKm` does not reset the others |
 | `photos` | array of maps `{ storagePath: string, order: number }` | backend, via `add_photo`/`remove_photo` | Capped at 6 (`MAX_PHOTOS` in [users.py](../backend/app/services/users.py)); `add_photo` rejects further attaches with a 400. No `url` field is stored — the client derives a download URL from `storagePath` itself via the Storage SDK, since [storage.rules](../storage.rules) allows any signed-in user to read photo blobs |
 | `fcmTokens` | array\<string\> | backend, via `POST`/`DELETE /profile/me/fcm-tokens` | Device tokens the notification Cloud Functions ([functions/main.py](../functions/main.py)) fan out to; the client registers its token after sign-in |
 | `status` | string: `"active"` \| `"paused"` \| `"banned"` | backend, set to `"active"` at creation | No endpoint currently transitions it to `"paused"` or `"banned"` — this is a placeholder for a future moderation/self-pause feature |
@@ -62,7 +63,7 @@ One document per swipe the user has made, keyed by the target's uid for O(1) "ha
 | `action` | string: `"like"` \| `"pass"` \| `"superlike"` | |
 | `createdAt` | Timestamp | |
 
-**Access rule:** `allow read, write: if false` — entirely backend-only. A client can never read or forge a swipe directly; every swipe is created by [matching.py](../backend/app/services/matching.py) as part of the swipe transaction.
+**Access rule:** `allow read, write: if false` — entirely backend-only at the Firestore layer. A client can never read or forge a swipe directly; every swipe is created by [matching.py](../backend/app/services/matching.py) as part of the swipe transaction. Users can list their *own* swipe history through the API instead: `GET /swipes` (optionally `?action=like` for likes sent).
 
 ---
 
@@ -78,13 +79,13 @@ Created only when both sides have liked each other, inside a Firestore transacti
 | `status` | string: `"active"` \| `"unmatched"` | backend | Set to `"unmatched"` by `POST /matches/{matchId}/unmatch` ([matches.py](../backend/app/services/matches.py)). An unmatched doc is never resurrected: a later re-like reports no match, and the message-create rule requires `status == "active"` |
 | `createdAt` | Timestamp | backend | |
 | `lastMessage` | map `{ text, senderId, createdAt }` or `null` | Cloud Function (`on_message_created`) | Denormalized copy of the newest message, kept in sync as messages arrive — lets the match-list screen render previews without reading every thread |
-| `unreadCount` | map `{ [uid]: number }` | Cloud Function (`on_message_created`) increments; nothing currently resets it | See Known Gaps below |
+| `unreadCount` | map `{ [uid]: number }` | Cloud Function (`on_message_created`) increments; `POST /matches/{matchId}/read` resets the caller's counter to 0 | |
 
 **Access rule:** clients can `read` a match only if their uid is in its `users` array; `write` is `false` — only the backend creates/updates it.
 
 ### `matches/{matchId}/messages/{messageId}`
 
-The one collection clients write to **directly**, bypassing FastAPI entirely — see [CHAT_SYSTEM.md](CHAT_SYSTEM.md) for the full rationale. Document ID is Firestore's auto-generated ID.
+Messages can be written two ways — **directly by clients** under rule enforcement (the real-time chat path, see [CHAT_SYSTEM.md](CHAT_SYSTEM.md)), or through the REST endpoints (`POST /matches/{matchId}/messages`, backed by [messages.py](../backend/app/services/messages.py)), which perform the same participant/active checks server-side. Reads are available both as real-time client listeners and via `GET /matches/{matchId}/messages` (paginated) and `GET /messages/sent` (collection-group query over the caller's sent messages). Document ID is Firestore's auto-generated ID.
 
 | Field | Type | Enforced by rules? | Notes |
 |---|---|---|---|
@@ -171,6 +172,7 @@ Firestore requires an explicit composite index whenever a query combines an equa
 |---|---|---|
 | `users` | `status` (==) + `location.geohash` (range) | The feed candidate query in `get_candidates` |
 | `matches` | `users` (array-contains) + `status` (==) | `GET /matches` listing a user's active matches |
+| `messages` (collection-group scope) | `senderId` (==) + `createdAt` (desc) | `GET /messages/sent` — all messages the caller has sent, across every match |
 
 ---
 
@@ -178,9 +180,7 @@ Firestore requires an explicit composite index whenever a query combines an equa
 
 These are things the schema *implies* but the code doesn't fully implement yet — flagging them here rather than in the code, since they're schema-level decisions as much as bugs:
 
-1. **`matches.unreadCount` is incremented but never reset.** There's no endpoint or client-direct rule allowing a user to zero out their own unread count when they open a thread.
-2. **`messages.readAt` is reserved but unreachable** — the rules block all updates to a message, so no read-receipt mechanism can write to it as the schema currently stands. It would need either a narrowly-scoped update rule (recipient-only, single-field) or moving read state onto the `matches` doc instead of per-message.
-3. **`gender` and `location` have no post-onboarding edit path** (`seekingGenders` is now editable via `PATCH /profile/me`) — worth deciding whether that's intentional (e.g. to prevent gaming the system) or just not built yet.
-4. **`preferences.distanceKm` is stored but the geohash cell size is fixed** at ~4.9km regardless of the chosen radius — the feed neither tightens nor widens with it (see the geohashing note in [TECH_STACK.md](TECH_STACK.md)).
+1. **`messages.readAt` is reserved but unreachable** — the rules block all updates to a message, so no per-message read-receipt mechanism exists. Thread-level read state *is* handled now (`POST /matches/{matchId}/read` zeroes the caller's `unreadCount`), which covers the badge-count use case; per-message receipts would need a narrowly-scoped update rule (recipient-only, single-field).
+2. **`preferences.distanceKm` is stored but the geohash cell size is fixed** at ~4.9km regardless of the chosen radius — the feed neither tightens nor widens with it (see the geohashing note in [TECH_STACK.md](TECH_STACK.md)).
 
-Previously listed gaps now closed: `fcmTokens` is writable via `POST /profile/me/fcm-tokens`; blocks are enforced in both the feed and the swipe path; messaging locks when a match is unmatched; photos are capped at 6.
+Previously listed gaps now closed: `fcmTokens` is writable via `POST /profile/me/fcm-tokens`; blocks are enforced in both the feed and the swipe path; messaging locks when a match is unmatched; photos are capped at 6; `unreadCount` is resettable via `POST /matches/{matchId}/read`; every profile field (`gender`, `dob`, `location`, `socials`, …) is editable via `PATCH /profile/me`.

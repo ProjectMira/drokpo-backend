@@ -36,12 +36,20 @@ def get_profile(uid: str) -> dict | None:
 
 def update_profile(uid: str, payload: ProfileUpdate) -> None:
     data = payload.model_dump(exclude_unset=True)
-    # Flatten preferences into dotted field paths so a partial preferences
-    # object merges into the stored map instead of replacing it wholesale
-    # (which would reset omitted subfields to their defaults).
+    # Flatten preferences/socials into dotted field paths so a partial object
+    # merges into the stored map instead of replacing it wholesale (which
+    # would reset omitted subfields to their defaults).
     prefs = data.pop("preferences", None) or {}
+    socials = data.pop("socials", None) or {}
+    location = data.pop("location", None)
     updates = {k: v for k, v in data.items() if v is not None}
     updates.update({f"preferences.{k}": v for k, v in prefs.items() if v is not None})
+    updates.update({f"socials.{k}": v for k, v in socials.items() if v is not None})
+    if location is not None:
+        # Location is replaced as a whole; the geohash is always derived
+        # server-side so a client can't desync it from lat/lng.
+        location["geohash"] = geo.encode(location["lat"], location["lng"])
+        updates["location"] = location
     if not updates:
         return
     updates["updatedAt"] = firestore.SERVER_TIMESTAMP
@@ -138,19 +146,20 @@ def get_candidates(uid: str, profile: dict, limit: int = 20) -> list[dict]:
     swiped_ids = {s.id for s in db.get_all(swipe_refs) if s.exists}
 
     excluded = _blocked_uids(db, uid)
-    seeking = set(profile.get("seekingGenders", []))
+    my_interests = set(profile.get("interests", []))
     age_min, age_max = prefs.get("ageMin"), prefs.get("ageMax")
 
-    candidates = []
+    # Rank the whole overfetched page by shared interests (most in common
+    # first) rather than returning in geohash order, so the feed surfaces
+    # the most compatible potential friends nearby.
+    ranked = []
     for doc in candidate_docs:
         if doc.id in swiped_ids or doc.id in excluded:
             continue
         data = doc.to_dict()
-        if seeking and data.get("gender") not in seeking:
-            continue
         if not _within_age(data.get("dob"), age_min, age_max):
             continue
-        candidates.append({"uid": doc.id, **data})
-        if len(candidates) >= limit:
-            break
-    return candidates
+        shared = len(my_interests & set(data.get("interests", [])))
+        ranked.append((shared, {"uid": doc.id, **data}))
+    ranked.sort(key=lambda pair: pair[0], reverse=True)
+    return [candidate for _, candidate in ranked[:limit]]
