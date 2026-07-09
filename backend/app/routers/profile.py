@@ -17,6 +17,12 @@ def get_my_profile(uid: str = Depends(get_current_uid)):
     return profile
 
 
+@router.delete("/me")
+def delete_my_account(uid: str = Depends(get_current_uid)):
+    users_service.delete_account(uid)
+    return {"ok": True}
+
+
 @router.patch("/me")
 def update_my_profile(payload: ProfileUpdate, uid: str = Depends(get_current_uid)):
     users_service.update_profile(uid, payload)

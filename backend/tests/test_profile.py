@@ -106,3 +106,11 @@ def test_remove_fcm_token(client, monkeypatch):
     response = client.delete("/api/profile/me/fcm-tokens", params={"token": "tok-123"})
     assert response.status_code == 200
     assert captured["t"] == "tok-123"
+
+
+def test_delete_my_account(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr("app.services.users.delete_account", lambda uid: captured.update(uid=uid))
+    response = client.delete("/api/profile/me")
+    assert response.status_code == 200
+    assert captured["uid"] == TEST_UID

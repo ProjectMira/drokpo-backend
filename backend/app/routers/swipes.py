@@ -20,6 +20,16 @@ def list_swipes(
     return {"swipes": matching_service.list_swipes(uid, action, limit)}
 
 
+@router.get("/received")
+def list_received_swipes(
+    uid: str = Depends(get_current_uid),
+    action: Literal["like", "pass", "superlike"] | None = Query(default=None),
+    limit: int = Query(default=100, le=500),
+):
+    # e.g. GET /api/swipes/received?action=like returns every like the caller has received.
+    return {"swipes": matching_service.list_received(uid, action, limit)}
+
+
 @router.post("/{target_uid}")
 def swipe(target_uid: str, payload: SwipeIn, uid: str = Depends(get_current_uid)):
     if target_uid == uid:

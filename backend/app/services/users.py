@@ -1,13 +1,43 @@
 from datetime import date
 
+from firebase_admin import auth as firebase_auth
 from firebase_admin import firestore
 
-from app.firebase import get_firestore
+from app.firebase import ensure_app, get_firestore
 from app.models.user import OnboardingIn, ProfileUpdate
 from app.services import geo
 
 USERS = "users"
 MAX_PHOTOS = 6
+
+# Fields safe to show to other members (no location, preferences, or fcmTokens).
+PUBLIC_FIELDS = (
+    "displayName",
+    "dob",
+    "gender",
+    "bio",
+    "occupation",
+    "education",
+    "region",
+    "languages",
+    "interests",
+    "socials",
+    "photos",
+)
+
+
+def public_summary(uid: str, data: dict) -> dict:
+    return {"uid": uid, **{k: data[k] for k in PUBLIC_FIELDS if k in data}}
+
+
+def get_public_profiles(uids: list[str]) -> dict[str, dict]:
+    """Batch-read the public view of several profiles, keyed by uid."""
+    unique = list(dict.fromkeys(uids))
+    if not unique:
+        return {}
+    db = get_firestore()
+    refs = [db.collection(USERS).document(uid) for uid in unique]
+    return {snap.id: public_summary(snap.id, snap.to_dict()) for snap in db.get_all(refs) if snap.exists}
 
 
 def create_profile(uid: str, payload: OnboardingIn) -> None:
@@ -97,6 +127,43 @@ def complete_onboarding(uid: str) -> None:
     get_firestore().collection(USERS).document(uid).update(
         {"onboardingComplete": True, "updatedAt": firestore.SERVER_TIMESTAMP}
     )
+
+
+def delete_account(uid: str) -> None:
+    """Remove the user's data and Firebase Auth account.
+
+    Matches are flipped to "unmatched" (not deleted) so the other participant's
+    chat history — and any evidence attached to reports — survives, same as a
+    normal unmatch.
+    """
+    from app.services import storage as storage_service
+
+    db = get_firestore()
+    ref = db.collection(USERS).document(uid)
+    snap = ref.get()
+    profile = snap.to_dict() if snap.exists else {}
+
+    for photo in profile.get("photos", []):
+        path = photo.get("storagePath")
+        if path:
+            storage_service.delete_blob(path)
+
+    for match in db.collection("matches").where("users", "array_contains", uid).stream():
+        if match.to_dict().get("status") == "active":
+            match.reference.update({"status": "unmatched"})
+
+    for swipe in ref.collection("swipes").stream():
+        swipe.reference.delete()
+    for blocked in db.collection("blocks").document(uid).collection("blockedUsers").stream():
+        blocked.reference.delete()
+
+    ref.delete()
+
+    ensure_app()
+    try:
+        firebase_auth.delete_user(uid)
+    except firebase_auth.UserNotFoundError:
+        pass
 
 
 def _within_age(dob: str | None, age_min: int | None, age_max: int | None) -> bool:

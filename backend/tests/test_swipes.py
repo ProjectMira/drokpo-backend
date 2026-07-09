@@ -55,3 +55,20 @@ def test_list_likes_sent(client, monkeypatch):
 
 def test_list_swipes_invalid_action(client):
     assert client.get("/api/swipes", params={"action": "wink"}).status_code == 422
+
+
+def test_list_received_swipes(client, monkeypatch):
+    captured = {}
+    received = [{"uid": "u9", "action": "like", "otherUser": {"uid": "u9", "displayName": "Dolma"}}]
+    monkeypatch.setattr(
+        "app.services.matching.list_received",
+        lambda uid, action, limit: captured.update(uid=uid, action=action, limit=limit) or received,
+    )
+    response = client.get("/api/swipes/received?action=like")
+    assert response.status_code == 200
+    assert response.json() == {"swipes": received}
+    assert captured == {"uid": TEST_UID, "action": "like", "limit": 100}
+
+
+def test_list_received_invalid_action(client):
+    assert client.get("/api/swipes/received?action=wink").status_code == 422

@@ -40,7 +40,17 @@ def _swipe_transaction(transaction, db, from_uid: str, to_uid: str, action: str)
             existing_status = match_snap.to_dict().get("status")
 
     swipe_ref = db.collection("users").document(from_uid).collection("swipes").document(to_uid)
-    transaction.set(swipe_ref, {"action": action, "createdAt": firestore.SERVER_TIMESTAMP})
+    # fromUid/toUid are denormalized into the doc so "likes you received" can
+    # be answered with a collection-group query on toUid.
+    transaction.set(
+        swipe_ref,
+        {
+            "action": action,
+            "fromUid": from_uid,
+            "toUid": to_uid,
+            "createdAt": firestore.SERVER_TIMESTAMP,
+        },
+    )
 
     if not reverse_liked:
         return None
@@ -77,4 +87,32 @@ def list_swipes(uid: str, action: str | None = None, limit: int = 100) -> list[d
     query = db.collection("users").document(uid).collection("swipes")
     if action:
         query = query.where("action", "==", action)
-    return [{"uid": doc.id, **doc.to_dict()} for doc in query.limit(limit).stream()]
+    swipes = [{"uid": doc.id, **doc.to_dict()} for doc in query.limit(limit).stream()]
+    return _attach_profiles(swipes)
+
+
+def list_received(uid: str, action: str | None = None, limit: int = 100) -> list[dict]:
+    """Swipes other users made on `uid` — e.g. the likes you received.
+
+    Collection-group query on the denormalized toUid field; needs the
+    COLLECTION_GROUP field override declared in firestore.indexes.json.
+    """
+    db = get_firestore()
+    query = db.collection_group("swipes").where("toUid", "==", uid).limit(limit)
+    received = []
+    for doc in query.stream():
+        data = doc.to_dict()
+        # Filter by action here rather than in the query so the single
+        # toUid index covers every variant.
+        if action and data.get("action") != action:
+            continue
+        received.append({"uid": data.get("fromUid", doc.reference.parent.parent.id), **data})
+    return _attach_profiles(received)
+
+
+def _attach_profiles(swipes: list[dict]) -> list[dict]:
+    """Join each swipe's counterpart profile; drops swipes whose profile is gone."""
+    from app.services import users as users_service
+
+    profiles = users_service.get_public_profiles([s["uid"] for s in swipes])
+    return [{**s, "otherUser": profiles[s["uid"]]} for s in swipes if s["uid"] in profiles]
