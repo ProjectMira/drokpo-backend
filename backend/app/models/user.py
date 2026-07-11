@@ -85,5 +85,9 @@ class PhotoConfirm(BaseModel):
     order: int = 0
 
 
+class PhotoOrderIn(BaseModel):
+    storagePaths: list[str]
+
+
 class FcmTokenIn(BaseModel):
     token: str

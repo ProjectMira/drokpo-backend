@@ -13,12 +13,13 @@ def _tokens_for(db, uids: list[str]) -> list[str]:
     return tokens
 
 
-def _send(tokens: list[str], title: str, body: str) -> None:
+def _send(tokens: list[str], title: str, body: str, data: dict[str, str] | None = None) -> None:
     if not tokens:
         return
     messaging.send_each_for_multicast(
         messaging.MulticastMessage(
             notification=messaging.Notification(title=title, body=body),
+            data=data or {},
             tokens=tokens,
         )
     )
@@ -27,9 +28,15 @@ def _send(tokens: list[str], title: str, body: str) -> None:
 @firestore_fn.on_document_created(document="matches/{matchId}")
 def on_match_created(event: firestore_fn.Event) -> None:
     data = event.data.to_dict() or {}
+    match_id = event.params["matchId"]
     db = firestore.client()
     tokens = _tokens_for(db, data.get("users", []))
-    _send(tokens, "You made a new friend!", "You have a new connection on Drokpo — say tashi delek!")
+    _send(
+        tokens,
+        "You made a new friend!",
+        "You have a new connection on Drokpo — say tashi delek!",
+        {"type": "match", "matchId": match_id},
+    )
 
 
 @firestore_fn.on_document_created(document="matches/{matchId}/messages/{messageId}")
@@ -59,4 +66,9 @@ def on_message_created(event: firestore_fn.Event) -> None:
     )
 
     tokens = _tokens_for(db, recipients)
-    _send(tokens, "New message", message.get("text", "")[:100])
+    _send(
+        tokens,
+        "New message",
+        message.get("text", "")[:100],
+        {"type": "message", "matchId": match_id},
+    )

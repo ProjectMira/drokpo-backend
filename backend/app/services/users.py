@@ -100,6 +100,26 @@ def add_photo(uid: str, storage_path: str, order: int) -> None:
     )
 
 
+def reorder_photos(uid: str, storage_paths: list[str]) -> None:
+    """Rewrite the photos array in the given order.
+
+    The incoming paths must be exactly the same set the user already has (same
+    multiset) — this only reorders, it can't add or drop photos. Per-photo keys
+    (e.g. an existing url) are preserved; each photo's `order` is set to its new
+    index and `photos[0]` becomes the primary/card photo.
+    """
+    ref = get_firestore().collection(USERS).document(uid)
+    snap = ref.get()
+    photos = snap.to_dict().get("photos", []) if snap.exists else []
+
+    by_path = {p.get("storagePath"): p for p in photos}
+    if sorted(storage_paths) != sorted(by_path.keys()):
+        raise ValueError("storagePaths must match your existing photos exactly")
+
+    reordered = [{**by_path[path], "storagePath": path, "order": i} for i, path in enumerate(storage_paths)]
+    ref.update({"photos": reordered, "updatedAt": firestore.SERVER_TIMESTAMP})
+
+
 def remove_photo(uid: str, storage_path: str) -> None:
     ref = get_firestore().collection(USERS).document(uid)
     snap = ref.get()

@@ -38,7 +38,7 @@ def onboarding_payload():
             "dob": "1998-04-12",
             "gender": "male",
             "bio": "New to the city, looking for gorshey partners",
-            "region": "Amdo",
+            "region": "Nepal",
             "languages": ["bo", "en"],
             "interests": ["hiking", "momo cooking", "gorshey"],
             "socials": {"instagram": "tenzin_la"},

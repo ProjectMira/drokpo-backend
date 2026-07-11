@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import get_current_uid
-from app.models.user import FcmTokenIn, PhotoConfirm, ProfileUpdate
+from app.models.user import FcmTokenIn, PhotoConfirm, PhotoOrderIn, ProfileUpdate
 from app.routers.common import attach_photo, require_owned_photo_path
 from app.services import storage as storage_service
 from app.services import users as users_service
@@ -32,6 +32,15 @@ def update_my_profile(payload: ProfileUpdate, uid: str = Depends(get_current_uid
 @router.post("/me/photos")
 def add_photo(payload: PhotoConfirm, uid: str = Depends(get_current_uid)):
     attach_photo(uid, payload)
+    return {"ok": True}
+
+
+@router.patch("/me/photos/order")
+def reorder_photos(payload: PhotoOrderIn, uid: str = Depends(get_current_uid)):
+    try:
+        users_service.reorder_photos(uid, payload.storagePaths)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
 
 

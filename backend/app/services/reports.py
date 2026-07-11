@@ -2,6 +2,7 @@ from firebase_admin import firestore
 
 from app.firebase import get_firestore
 from app.models.report import ReportIn
+from app.services.matching import _match_id
 
 
 def create_report(reporter_uid: str, payload: ReportIn) -> None:
@@ -35,6 +36,14 @@ def block_user(uid: str, target_uid: str) -> None:
     batch.set(blocked_ref, {"createdAt": firestore.SERVER_TIMESTAMP})
     batch.set(blocked_by_ref, {"createdAt": firestore.SERVER_TIMESTAMP})
     batch.commit()
+
+    # Blocking ends any conversation: flip the deterministic match doc to
+    # "unmatched" if it's still active, so the blocked person can't keep
+    # messaging (match ids are sorted-uid pairs, shared with matching.py).
+    match_ref = db.collection("matches").document(_match_id(uid, target_uid))
+    match_snap = match_ref.get()
+    if match_snap.exists and match_snap.to_dict().get("status") == "active":
+        match_ref.update({"status": "unmatched"})
 
 
 def unblock_user(uid: str, target_uid: str) -> None:

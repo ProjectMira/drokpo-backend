@@ -28,7 +28,7 @@ def test_update_profile_all_fields_editable(client, monkeypatch):
             "gender": "female",
             "occupation": "nurse",
             "education": "BSc",
-            "region": "Kham",
+            "region": "India",
             "languages": ["bo"],
             "interests": ["thangka painting"],
             "socials": {"instagram": "new_handle", "youtube": "TenzinVlogs"},
@@ -88,6 +88,30 @@ def test_delete_photo_rejects_foreign_path(client):
         "/api/profile/me/photos", params={"storage_path": "users/other-uid/photos/b.jpg"}
     )
     assert response.status_code == 403
+
+
+def test_reorder_photos(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.users.reorder_photos",
+        lambda uid, paths: captured.update(uid=uid, paths=paths),
+    )
+    paths = [f"users/{TEST_UID}/photos/b.jpg", f"users/{TEST_UID}/photos/a.jpg"]
+    response = client.patch("/api/profile/me/photos/order", json={"storagePaths": paths})
+    assert response.status_code == 200
+    assert captured["uid"] == TEST_UID
+    assert captured["paths"] == paths
+
+
+def test_reorder_photos_rejects_mismatch(client, monkeypatch):
+    def mismatch(uid, paths):
+        raise ValueError("storagePaths must match your existing photos exactly")
+
+    monkeypatch.setattr("app.services.users.reorder_photos", mismatch)
+    response = client.patch(
+        "/api/profile/me/photos/order", json={"storagePaths": ["users/x/photos/a.jpg"]}
+    )
+    assert response.status_code == 400
 
 
 def test_register_fcm_token(client, monkeypatch):
