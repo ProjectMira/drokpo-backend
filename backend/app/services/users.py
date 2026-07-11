@@ -210,43 +210,83 @@ def _blocked_uids(db, uid: str) -> set[str]:
 def get_candidates(uid: str, profile: dict, limit: int = 20) -> list[dict]:
     db = get_firestore()
     prefs = profile.get("preferences", {})
-    geohash = profile.get("location", {}).get("geohash", "")
-    prefix = geo.feed_prefix(geohash)
+    location = profile.get("location", {})
+    geohash = location.get("geohash", "")
+    radius_km = prefs.get("distanceKm") or 50
 
-    # U+F8FF sorts after every character used in geohashes, so the range
-    # [prefix, prefix + "\uf8ff") covers exactly the strings starting with prefix.
-    query = (
-        db.collection(USERS)
-        .where("status", "==", "active")
-        .where("location.geohash", ">=", prefix)
-        .where("location.geohash", "<", prefix + "\uf8ff")
-        .limit(limit * 3)  # overfetch since we filter swiped/gender/age/blocked below
-    )
-    candidate_docs = [d for d in query.stream() if d.id != uid]
-    if not candidate_docs:
+    # One prefix-range query per covering cell (the searcher's cell and its
+    # neighbors, at a precision wide enough for radius_km), deduped by uid;
+    # the exact haversine cut in _rank_candidates trims the corners the cells
+    # over-cover. U+F8FF sorts after every character used in geohashes, so the
+    # range [prefix, prefix + "") covers exactly the strings starting
+    # with prefix.
+    nearby: dict[str, dict] = {}
+    for prefix in geo.cover_prefixes(geohash, radius_km):
+        query = (
+            db.collection(USERS)
+            .where("status", "==", "active")
+            .where("location.geohash", ">=", prefix)
+            .where("location.geohash", "<", prefix + "")
+            .limit(limit * 3)  # overfetch since we filter swiped/age/blocked below
+        )
+        for doc in query.stream():
+            if doc.id != uid:
+                nearby[doc.id] = doc.to_dict()
+
+    candidates = _rank_candidates(db, uid, profile, nearby, radius_km, limit)
+    if candidates:
+        return candidates
+
+    # Nobody within the preferred distance — while the community is small,
+    # widen to everyone (distance still shown, just not filtered) rather than
+    # leave the feed empty.
+    worldwide = {
+        doc.id: doc.to_dict()
+        for doc in db.collection(USERS).where("status", "==", "active").limit(limit * 3).stream()
+        if doc.id != uid
+    }
+    return _rank_candidates(db, uid, profile, worldwide, None, limit)
+
+
+def _rank_candidates(
+    db, uid: str, profile: dict, pool: dict[str, dict], radius_km: float | None, limit: int
+) -> list[dict]:
+    """Filter a candidate pool (swiped/blocked/age/distance) and rank by shared
+    interests, most in common first, returning public views only."""
+    if not pool:
         return []
 
     # Batch-read only the swipe docs for this candidate page, instead of
     # streaming the caller's entire (unbounded) swipe history.
     swipes = db.collection(USERS).document(uid).collection("swipes")
-    swipe_refs = [swipes.document(d.id) for d in candidate_docs]
+    swipe_refs = [swipes.document(cand_uid) for cand_uid in pool]
     swiped_ids = {s.id for s in db.get_all(swipe_refs) if s.exists}
 
     excluded = _blocked_uids(db, uid)
+    prefs = profile.get("preferences", {})
+    location = profile.get("location", {})
     my_interests = set(profile.get("interests", []))
     age_min, age_max = prefs.get("ageMin"), prefs.get("ageMax")
+    my_lat, my_lng = location.get("lat"), location.get("lng")
 
-    # Rank the whole overfetched page by shared interests (most in common
-    # first) rather than returning in geohash order, so the feed surfaces
-    # the most compatible potential friends nearby.
     ranked = []
-    for doc in candidate_docs:
-        if doc.id in swiped_ids or doc.id in excluded:
+    for cand_uid, data in pool.items():
+        if cand_uid in swiped_ids or cand_uid in excluded:
             continue
-        data = doc.to_dict()
         if not _within_age(data.get("dob"), age_min, age_max):
             continue
+        distance_km = None
+        cand_location = data.get("location", {})
+        if None not in (my_lat, my_lng, cand_location.get("lat"), cand_location.get("lng")):
+            distance_km = geo.haversine_km(my_lat, my_lng, cand_location["lat"], cand_location["lng"])
+            if radius_km is not None and distance_km > radius_km:
+                continue
         shared = len(my_interests & set(data.get("interests", [])))
-        ranked.append((shared, {"uid": doc.id, **data}))
+        # Only the public view goes out — the raw doc holds private fields
+        # (exact location, preferences, fcmTokens).
+        candidate = public_summary(cand_uid, data)
+        if distance_km is not None:
+            candidate["distanceKm"] = round(distance_km, 1)
+        ranked.append((shared, candidate))
     ranked.sort(key=lambda pair: pair[0], reverse=True)
     return [candidate for _, candidate in ranked[:limit]]

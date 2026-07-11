@@ -123,3 +123,117 @@ def test_within_age():
     assert _within_age(None, None, None)  # no age prefs → everyone passes
     assert not _within_age(None, 18, 30)  # prefs set but no dob → excluded
     assert not _within_age("not-a-date", 18, 30)
+
+
+# --- feed distance / candidate ranking ---------------------------------------
+
+from app.services import geo
+
+
+def test_precision_matches_radius():
+    assert geo.precision_for_radius(5) == 4
+    assert geo.precision_for_radius(50) == 3
+    assert geo.precision_for_radius(500) == 2
+
+
+def test_cover_prefixes_span_neighbor_cells():
+    # Delhi and Dharamshala are ~400km apart; a 500km radius must cover both.
+    delhi, dharamshala = "ttngm2d", "ttwr29q"
+    prefixes = geo.cover_prefixes(delhi, 500)
+    assert any(dharamshala.startswith(p) for p in prefixes)
+    # ...but a 50km radius must not.
+    prefixes = geo.cover_prefixes(delhi, 50)
+    assert not any(dharamshala.startswith(p) for p in prefixes)
+
+
+class FeedStubDB:
+    """Just enough Firestore for _rank_candidates: no swipes, no blocks."""
+
+    def collection(self, name):
+        return self
+
+    def document(self, uid):
+        return self
+
+    def get_all(self, refs):
+        return []
+
+
+def _searcher(lat=28.7, lng=77.2, radius=50):
+    return {
+        "interests": ["Gorshey"],
+        "location": {"lat": lat, "lng": lng},
+        "preferences": {"ageMin": 18, "ageMax": 99, "distanceKm": radius},
+    }
+
+
+def _candidate(lat, lng, **extra):
+    return {
+        "displayName": "Cand",
+        "dob": "1998-04-12",
+        "location": {"lat": lat, "lng": lng},
+        "fcmTokens": ["secret-token"],
+        "preferences": {"ageMin": 20, "ageMax": 30},
+        **extra,
+    }
+
+
+def test_rank_candidates_filters_by_distance_and_strips_private_fields(monkeypatch):
+    monkeypatch.setattr(users_service, "_blocked_uids", lambda db, uid: set())
+    pool = {
+        "near": _candidate(28.75, 77.25),  # ~7km away
+        "far": _candidate(32.22, 76.32),  # ~400km away
+    }
+    result = users_service._rank_candidates(FeedStubDB(), "me", _searcher(), pool, 50, 20)
+    assert [c["uid"] for c in result] == ["near"]
+    assert result[0]["distanceKm"] < 50
+    assert "fcmTokens" not in result[0]
+    assert "preferences" not in result[0]
+    assert "location" not in result[0]
+
+
+def test_rank_candidates_unlimited_radius_keeps_everyone(monkeypatch):
+    monkeypatch.setattr(users_service, "_blocked_uids", lambda db, uid: set())
+    pool = {"far": _candidate(32.22, 76.32)}
+    result = users_service._rank_candidates(FeedStubDB(), "me", _searcher(), pool, None, 20)
+    assert [c["uid"] for c in result] == ["far"]
+    assert result[0]["distanceKm"] > 300
+
+
+class FakeDoc:
+    def __init__(self, uid, data):
+        self.id = uid
+        self._data = data
+
+    def to_dict(self):
+        return self._data
+
+
+class GlobalOnlyDB(FeedStubDB):
+    """Firestore stub whose geohash-scoped queries find nobody but whose
+    unscoped query returns one far-away user — exercises the worldwide
+    fallback."""
+
+    def __init__(self, docs):
+        self.docs = docs
+        self.filters = []
+
+    def where(self, *args, **kwargs):
+        clone = GlobalOnlyDB(self.docs)
+        clone.filters = self.filters + [args or tuple(kwargs.values())]
+        return clone
+
+    def limit(self, n):
+        return self
+
+    def stream(self):
+        geohash_scoped = any("location.geohash" in str(f) for f in self.filters)
+        return iter([] if geohash_scoped else self.docs)
+
+
+def test_get_candidates_falls_back_worldwide_when_radius_is_empty(monkeypatch):
+    db = GlobalOnlyDB([FakeDoc("far", _candidate(32.22, 76.32))])
+    monkeypatch.setattr(users_service, "get_firestore", lambda: db)
+    monkeypatch.setattr(users_service, "_blocked_uids", lambda db, uid: set())
+    result = users_service.get_candidates("me", _searcher(radius=50))
+    assert [c["uid"] for c in result] == ["far"]
