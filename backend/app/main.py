@@ -1,8 +1,19 @@
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 
 from app.routers import feed, matches, messages, onboarding, profile, reports, swipes
 
 app = FastAPI(title="Drokpo API")
+
+
+@app.middleware("http")
+async def no_store(request: Request, call_next):
+    # Authenticated, per-user JSON must never be cached. Without this header,
+    # URLSession's cache heuristics may replay stale responses — a cached 404
+    # for GET /profile/me once trapped freshly-onboarded users on the
+    # onboarding screen.
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 # Firebase Hosting rewrites /api/** to this service and forwards the path
 # unstripped, so every route must live under /api to be reachable through
