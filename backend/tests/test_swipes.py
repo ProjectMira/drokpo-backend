@@ -72,3 +72,62 @@ def test_list_received_swipes(client, monkeypatch):
 
 def test_list_received_invalid_action(client):
     assert client.get("/api/swipes/received?action=wink").status_code == 422
+
+
+def test_attach_match_state(monkeypatch):
+    """Each swipe gets matchId set only when the counterpart match is active,
+    and matchId null (with the raw status) otherwise."""
+    from app.services import matching as matching_service
+    from app.services.matching import _match_id
+
+    match_docs = {
+        _match_id("me", "matched-active"): {"status": "active"},
+        _match_id("me", "matched-ended"): {"status": "unmatched"},
+        # "no-match" has no doc at all.
+    }
+
+    class StubSnap:
+        def __init__(self, doc_id, data):
+            self.id = doc_id
+            self._data = data
+            self.exists = data is not None
+
+        def to_dict(self):
+            return self._data
+
+    class StubRef:
+        def __init__(self, doc_id):
+            self.id = doc_id
+
+    class StubCollection:
+        def document(self, doc_id):
+            return StubRef(doc_id)
+
+    class StubDB:
+        def collection(self, name):
+            assert name == "matches"
+            return StubCollection()
+
+        def get_all(self, refs):
+            return [StubSnap(ref.id, match_docs.get(ref.id)) for ref in refs]
+
+    swipes = [
+        {"uid": "matched-active"},
+        {"uid": "matched-ended"},
+        {"uid": "no-match"},
+    ]
+    result = matching_service._attach_match_state(StubDB(), "me", swipes)
+
+    by_uid = {s["uid"]: s for s in result}
+    assert by_uid["matched-active"]["matchId"] == _match_id("me", "matched-active")
+    assert by_uid["matched-active"]["matchStatus"] == "active"
+    assert by_uid["matched-ended"]["matchId"] is None
+    assert by_uid["matched-ended"]["matchStatus"] == "unmatched"
+    assert by_uid["no-match"]["matchId"] is None
+    assert by_uid["no-match"]["matchStatus"] is None
+
+
+def test_attach_match_state_empty_list():
+    from app.services import matching as matching_service
+
+    assert matching_service._attach_match_state(object(), "me", []) == []

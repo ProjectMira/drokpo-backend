@@ -88,7 +88,7 @@ def list_swipes(uid: str, action: str | None = None, limit: int = 100) -> list[d
     if action:
         query = query.where("action", "==", action)
     swipes = [{"uid": doc.id, **doc.to_dict()} for doc in query.limit(limit).stream()]
-    return _attach_profiles(swipes)
+    return _attach_match_state(db, uid, _attach_profiles(swipes))
 
 
 def list_received(uid: str, action: str | None = None, limit: int = 100) -> list[dict]:
@@ -107,7 +107,7 @@ def list_received(uid: str, action: str | None = None, limit: int = 100) -> list
         if action and data.get("action") != action:
             continue
         received.append({"uid": data.get("fromUid", doc.reference.parent.parent.id), **data})
-    return _attach_profiles(received)
+    return _attach_match_state(db, uid, _attach_profiles(received))
 
 
 def _attach_profiles(swipes: list[dict]) -> list[dict]:
@@ -116,3 +116,18 @@ def _attach_profiles(swipes: list[dict]) -> list[dict]:
 
     profiles = users_service.get_public_profiles([s["uid"] for s in swipes])
     return [{**s, "otherUser": profiles[s["uid"]]} for s in swipes if s["uid"] in profiles]
+
+
+def _attach_match_state(db, uid: str, swipes: list[dict]) -> list[dict]:
+    """Tell the client whether each swipe's counterpart is an active match, so
+    it can offer "Send message" instead of "Like back"."""
+    if not swipes:
+        return swipes
+    refs = [db.collection("matches").document(_match_id(uid, s["uid"])) for s in swipes]
+    status_by_id = {snap.id: (snap.to_dict() or {}).get("status") for snap in db.get_all(refs) if snap.exists}
+    for s in swipes:
+        match_id = _match_id(uid, s["uid"])
+        status = status_by_id.get(match_id)
+        s["matchId"] = match_id if status == "active" else None
+        s["matchStatus"] = status
+    return swipes
