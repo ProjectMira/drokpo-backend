@@ -51,8 +51,10 @@ def test_update_profile_rejects_blank_instagram(client):
 
 
 def test_add_photo(client, monkeypatch):
-    monkeypatch.setattr("app.services.storage.blob_exists", lambda path: True)
-    monkeypatch.setattr("app.services.users.add_photo", lambda uid, path, order: None)
+    monkeypatch.setattr(
+        "app.services.storage.ensure_download_url", lambda path: f"https://cdn.example/{path}"
+    )
+    monkeypatch.setattr("app.services.users.add_photo", lambda uid, path, order, url: None)
     response = client.post(
         "/api/profile/me/photos", json={"storagePath": f"users/{TEST_UID}/photos/b.jpg"}
     )
@@ -60,9 +62,11 @@ def test_add_photo(client, monkeypatch):
 
 
 def test_add_photo_over_cap(client, monkeypatch):
-    monkeypatch.setattr("app.services.storage.blob_exists", lambda path: True)
+    monkeypatch.setattr(
+        "app.services.storage.ensure_download_url", lambda path: f"https://cdn.example/{path}"
+    )
 
-    def over_cap(uid, path, order):
+    def over_cap(uid, path, order, url):
         raise ValueError("Maximum of 6 photos allowed")
 
     monkeypatch.setattr("app.services.users.add_photo", over_cap)
@@ -138,3 +142,19 @@ def test_delete_my_account(client, monkeypatch):
     response = client.delete("/api/profile/me")
     assert response.status_code == 200
     assert captured["uid"] == TEST_UID
+
+
+def test_update_profile_answers(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.users.update_profile", lambda uid, payload: captured.update(payload=payload)
+    )
+    body = {"answers": {"teaChoice": "Chai", "favoriteMusic": ""}}
+    assert client.patch("/api/profile/me", json=body).status_code == 200
+    # Emptied answers are dropped so the stored map only holds real answers.
+    assert captured["payload"].answers == {"teaChoice": "Chai"}
+
+
+def test_update_profile_rejects_long_answer_key(client):
+    body = {"answers": {"k" * 41: "yes"}}
+    assert client.patch("/api/profile/me", json=body).status_code == 422

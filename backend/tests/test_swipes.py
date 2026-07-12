@@ -131,3 +131,23 @@ def test_attach_match_state_empty_list():
     from app.services import matching as matching_service
 
     assert matching_service._attach_match_state(object(), "me", []) == []
+
+
+def test_undo_swipe(client, monkeypatch):
+    undone = {}
+    monkeypatch.setattr(
+        "app.services.matching.undo_swipe", lambda f, t: undone.update(from_uid=f, to_uid=t)
+    )
+    response = client.delete("/api/swipes/u2")
+    assert response.status_code == 200
+    assert undone == {"from_uid": "test-uid", "to_uid": "u2"}
+
+
+def test_undo_swipe_refused_after_match(client, monkeypatch):
+    from app.services.matching import MatchedError
+
+    def raise_matched(f, t):
+        raise MatchedError("You already matched")
+
+    monkeypatch.setattr("app.services.matching.undo_swipe", raise_matched)
+    assert client.delete("/api/swipes/u2").status_code == 409

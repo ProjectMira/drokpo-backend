@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
 from firebase_admin import auth as firebase_auth
@@ -21,6 +22,7 @@ PUBLIC_FIELDS = (
     "region",
     "languages",
     "interests",
+    "answers",
     "socials",
     "photos",
 )
@@ -86,15 +88,18 @@ def update_profile(uid: str, payload: ProfileUpdate) -> None:
     get_firestore().collection(USERS).document(uid).update(updates)
 
 
-def add_photo(uid: str, storage_path: str, order: int) -> None:
+def add_photo(uid: str, storage_path: str, order: int, url: str | None = None) -> None:
     ref = get_firestore().collection(USERS).document(uid)
     snap = ref.get()
     photos = snap.to_dict().get("photos", []) if snap.exists else []
     if len(photos) >= MAX_PHOTOS:
         raise ValueError(f"Maximum of {MAX_PHOTOS} photos allowed")
+    photo = {"storagePath": storage_path, "order": order}
+    if url:
+        photo["url"] = url
     ref.update(
         {
-            "photos": firestore.ArrayUnion([{"storagePath": storage_path, "order": order}]),
+            "photos": firestore.ArrayUnion([photo]),
             "updatedAt": firestore.SERVER_TIMESTAMP,
         }
     )
@@ -220,8 +225,7 @@ def get_candidates(uid: str, profile: dict, limit: int = 20) -> list[dict]:
     # over-cover. U+F8FF sorts after every character used in geohashes, so the
     # range [prefix, prefix + "") covers exactly the strings starting
     # with prefix.
-    nearby: dict[str, dict] = {}
-    for prefix in geo.cover_prefixes(geohash, radius_km):
+    def fetch_prefix(prefix: str) -> list:
         query = (
             db.collection(USERS)
             .where("status", "==", "active")
@@ -229,9 +233,17 @@ def get_candidates(uid: str, profile: dict, limit: int = 20) -> list[dict]:
             .where("location.geohash", "<", prefix + "")
             .limit(limit * 3)  # overfetch since we filter swiped/age/blocked below
         )
-        for doc in query.stream():
-            if doc.id != uid:
-                nearby[doc.id] = doc.to_dict()
+        return list(query.stream())
+
+    # The covering cells are independent queries; running them concurrently
+    # costs one Firestore round-trip of latency instead of up to nine.
+    prefixes = geo.cover_prefixes(geohash, radius_km)
+    nearby: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=len(prefixes)) as pool:
+        for docs in pool.map(fetch_prefix, prefixes):
+            for doc in docs:
+                if doc.id != uid:
+                    nearby[doc.id] = doc.to_dict()
 
     candidates = _rank_candidates(db, uid, profile, nearby, radius_km, limit)
     if candidates:

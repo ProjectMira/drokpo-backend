@@ -1,8 +1,13 @@
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.middleware.gzip import GZipMiddleware
 
-from app.routers import feed, matches, messages, onboarding, profile, reports, swipes
+from app.routers import ads, feed, matches, messages, onboarding, profile, reports, swipes
 
 app = FastAPI(title="Drokpo API")
+
+# Feed/matches pages are tens of KB of highly compressible JSON; gzip cuts
+# them ~5-10x on the cell networks most members are on.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.middleware("http")
@@ -26,6 +31,7 @@ api.include_router(swipes.router)
 api.include_router(matches.router)
 api.include_router(messages.router)
 api.include_router(reports.router)
+api.include_router(ads.router)
 app.include_router(api)
 
 

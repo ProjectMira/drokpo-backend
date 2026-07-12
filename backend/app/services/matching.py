@@ -7,6 +7,10 @@ class BlockedError(Exception):
     pass
 
 
+class MatchedError(Exception):
+    pass
+
+
 def _match_id(uid_a: str, uid_b: str) -> str:
     return "_".join(sorted([uid_a, uid_b]))
 
@@ -82,13 +86,27 @@ def record_swipe(from_uid: str, to_uid: str, action: str) -> str | None:
     return _swipe_transaction(transaction, db, from_uid, to_uid, action)
 
 
+def undo_swipe(from_uid: str, to_uid: str) -> None:
+    """Delete a recorded swipe so the person can reappear in the feed.
+
+    Refused once an active match exists — undoing the like that formed a match
+    must go through unmatch instead, so the other side's chat state stays
+    consistent.
+    """
+    db = get_firestore()
+    match_snap = db.collection("matches").document(_match_id(from_uid, to_uid)).get()
+    if match_snap.exists and match_snap.to_dict().get("status") == "active":
+        raise MatchedError("You already matched — unmatch instead of undoing the swipe")
+    db.collection("users").document(from_uid).collection("swipes").document(to_uid).delete()
+
+
 def list_swipes(uid: str, action: str | None = None, limit: int = 100) -> list[dict]:
     db = get_firestore()
     query = db.collection("users").document(uid).collection("swipes")
     if action:
         query = query.where("action", "==", action)
     swipes = [{"uid": doc.id, **doc.to_dict()} for doc in query.limit(limit).stream()]
-    return _attach_match_state(db, uid, _attach_profiles(swipes))
+    return _attach_match_state(db, uid, _attach_profiles(_drop_blocked(db, uid, swipes)))
 
 
 def list_received(uid: str, action: str | None = None, limit: int = 100) -> list[dict]:
@@ -98,16 +116,29 @@ def list_received(uid: str, action: str | None = None, limit: int = 100) -> list
     COLLECTION_GROUP field override declared in firestore.indexes.json.
     """
     db = get_firestore()
-    query = db.collection_group("swipes").where("toUid", "==", uid).limit(limit)
+    query = db.collection_group("swipes").where("toUid", "==", uid)
+    if action:
+        # Filter in the query (composite collection-group index in
+        # firestore.indexes.json) so `limit` counts matching docs — filtering
+        # after the fetch let a page of passes crowd likes out of the limit.
+        query = query.where("action", "==", action)
     received = []
-    for doc in query.stream():
+    for doc in query.limit(limit).stream():
         data = doc.to_dict()
-        # Filter by action here rather than in the query so the single
-        # toUid index covers every variant.
-        if action and data.get("action") != action:
-            continue
         received.append({"uid": data.get("fromUid", doc.reference.parent.parent.id), **data})
-    return _attach_match_state(db, uid, _attach_profiles(received))
+    return _attach_match_state(db, uid, _attach_profiles(_drop_blocked(db, uid, received)))
+
+
+def _drop_blocked(db, uid: str, swipes: list[dict]) -> list[dict]:
+    """Hide swipes to/from anyone in a block relationship with `uid` — a
+    blocked user's old like must not resurface in Likes, where liking back
+    would only 403."""
+    from app.services import users as users_service
+
+    if not swipes:
+        return swipes
+    blocked = users_service._blocked_uids(db, uid)
+    return [s for s in swipes if s["uid"] not in blocked]
 
 
 def _attach_profiles(swipes: list[dict]) -> list[dict]:

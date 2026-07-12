@@ -54,17 +54,26 @@ def test_onboarding_gender_optional(client, onboarding_payload, monkeypatch):
 
 
 def test_confirm_photo(client, monkeypatch):
-    monkeypatch.setattr("app.services.storage.blob_exists", lambda path: True)
+    monkeypatch.setattr(
+        "app.services.storage.ensure_download_url", lambda path: f"https://cdn.example/{path}"
+    )
     added = {}
     monkeypatch.setattr(
-        "app.services.users.add_photo", lambda uid, path, order: added.update(path=path, order=order)
+        "app.services.users.add_photo",
+        lambda uid, path, order, url: added.update(path=path, order=order, url=url),
     )
     response = client.post(
         "/api/onboarding/photos/confirm",
         json={"storagePath": f"users/{TEST_UID}/photos/a.jpg", "order": 1},
     )
     assert response.status_code == 200
-    assert added == {"path": f"users/{TEST_UID}/photos/a.jpg", "order": 1}
+    # The resolved download URL is stored alongside the path so the app can
+    # render the photo without a per-photo getDownloadURL() round-trip.
+    assert added == {
+        "path": f"users/{TEST_UID}/photos/a.jpg",
+        "order": 1,
+        "url": f"https://cdn.example/users/{TEST_UID}/photos/a.jpg",
+    }
 
 
 def test_confirm_photo_rejects_foreign_path(client):
@@ -75,7 +84,8 @@ def test_confirm_photo_rejects_foreign_path(client):
 
 
 def test_confirm_photo_missing_blob(client, monkeypatch):
-    monkeypatch.setattr("app.services.storage.blob_exists", lambda path: False)
+    # ensure_download_url returns None when the blob was never uploaded.
+    monkeypatch.setattr("app.services.storage.ensure_download_url", lambda path: None)
     response = client.post(
         "/api/onboarding/photos/confirm", json={"storagePath": f"users/{TEST_UID}/photos/a.jpg"}
     )
@@ -95,3 +105,40 @@ def test_complete_onboarding_requires_photo(client, monkeypatch):
     response = client.post("/api/onboarding/complete")
     assert response.status_code == 400
     assert "photo" in response.json()["detail"]
+
+
+def test_onboarding_accepts_answers_and_work(client, onboarding_payload, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.users.create_profile", lambda uid, payload: captured.update(payload=payload)
+    )
+    payload = onboarding_payload(
+        occupation="Nurse",
+        education="Bachelor's",
+        answers={"teaChoice": "Butter tea", "travelledTo": " Nepal, India "},
+    )
+    assert client.post("/api/onboarding", json=payload).status_code == 200
+    assert captured["payload"].occupation == "Nurse"
+    assert captured["payload"].education == "Bachelor's"
+    # Values are trimmed on the way in.
+    assert captured["payload"].answers == {"teaChoice": "Butter tea", "travelledTo": "Nepal, India"}
+
+
+def test_onboarding_drops_empty_answers(client, onboarding_payload, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.users.create_profile", lambda uid, payload: captured.update(payload=payload)
+    )
+    payload = onboarding_payload(answers={"teaChoice": "  "})
+    assert client.post("/api/onboarding", json=payload).status_code == 200
+    assert captured["payload"].answers == {}
+
+
+def test_onboarding_rejects_oversized_answer(client, onboarding_payload):
+    payload = onboarding_payload(answers={"bio2": "x" * 501})
+    assert client.post("/api/onboarding", json=payload).status_code == 422
+
+
+def test_onboarding_rejects_too_many_answers(client, onboarding_payload):
+    payload = onboarding_payload(answers={f"q{i}": "yes" for i in range(31)})
+    assert client.post("/api/onboarding", json=payload).status_code == 422

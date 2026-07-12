@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.dependencies import get_current_uid
 from app.models.swipe import SwipeIn
 from app.services import matching as matching_service
-from app.services.matching import BlockedError
+from app.services.matching import BlockedError, MatchedError
 
 router = APIRouter(prefix="/swipes", tags=["swipes"])
 
@@ -39,3 +39,14 @@ def swipe(target_uid: str, payload: SwipeIn, uid: str = Depends(get_current_uid)
     except BlockedError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     return {"matched": match_id is not None, "matchId": match_id}
+
+
+@router.delete("/{target_uid}")
+def undo_swipe(target_uid: str, uid: str = Depends(get_current_uid)):
+    # Rewind: forget the caller's last swipe on target_uid so they reappear
+    # in the feed. Refused once the pair has an active match.
+    try:
+        matching_service.undo_swipe(uid, target_uid)
+    except MatchedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True}

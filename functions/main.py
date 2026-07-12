@@ -1,7 +1,79 @@
-from firebase_admin import firestore, initialize_app, messaging
-from firebase_functions import firestore_fn
+import io
+import uuid
+
+from firebase_admin import firestore, initialize_app, messaging, storage
+from firebase_functions import firestore_fn, options, storage_fn
+from google.api_core import exceptions as google_exceptions
+from PIL import Image, ImageOps
 
 initialize_app()
+
+# Profile cards render at phone-screen sizes; a 1080px-longest-edge JPEG is
+# visually identical there but ~10-30x smaller than a raw camera upload.
+MAX_PHOTO_DIM = 1080
+JPEG_QUALITY = 82
+# Must match PHOTO_CACHE_CONTROL in backend/app/services/storage.py.
+PHOTO_CACHE_CONTROL = "public, max-age=2592000"
+
+
+@storage_fn.on_object_finalized(memory=options.MemoryOption.MB_512)
+def optimize_photo(event: storage_fn.CloudEvent[storage_fn.StorageObjectData]) -> None:
+    """Downscale and re-encode uploaded photos in place.
+
+    The storagePath — and therefore any download URL/token the backend has
+    already stored — stays identical; only the bytes get smaller. Users keep
+    uploading straight from camera (up to the 10MB rule limit) and viewers
+    download a phone-sized JPEG instead.
+    """
+    obj = event.data
+    name = obj.name or ""
+    is_profile_photo = name.startswith("users/") and "/photos/" in name
+    if not is_profile_photo and not name.startswith("ads/"):
+        return
+    if not (obj.content_type or "").startswith("image/"):
+        return
+    if (obj.metadata or {}).get("drokpoOptimized"):
+        # Our own rewrite re-fires this trigger; the marker breaks the loop.
+        return
+
+    bucket = storage.bucket(obj.bucket)
+    for _ in range(2):
+        blob = bucket.get_blob(name)
+        if blob is None:
+            return
+        try:
+            image = Image.open(io.BytesIO(blob.download_as_bytes()))
+            # Bake the EXIF rotation into the pixels before it's stripped.
+            image = ImageOps.exif_transpose(image)
+        except Exception:
+            return  # not decodable (e.g. HEIC without codec) — leave it alone
+        image.thumbnail((MAX_PHOTO_DIM, MAX_PHOTO_DIM))  # no-op if already small
+        if image.mode not in ("RGB", "L"):
+            image = image.convert("RGB")
+        out = io.BytesIO()
+        image.save(out, format="JPEG", quality=JPEG_QUALITY, optimize=True, progressive=True)
+
+        # Keep any download token the backend minted between upload and now,
+        # and mint one ourselves otherwise so the token never changes again.
+        metadata = dict(blob.metadata or {})
+        metadata.setdefault("firebaseStorageDownloadTokens", str(uuid.uuid4()))
+        metadata["drokpoOptimized"] = "true"
+        blob.metadata = metadata
+        blob.cache_control = PHOTO_CACHE_CONTROL
+        blob.content_type = "image/jpeg"
+        try:
+            # Generation preconditions close the race with the backend's
+            # attach-time metadata patch: if the blob changed since we read
+            # it, retry with the fresh token instead of clobbering it.
+            blob.upload_from_string(
+                out.getvalue(),
+                content_type="image/jpeg",
+                if_generation_match=blob.generation,
+                if_metageneration_match=blob.metageneration,
+            )
+            return
+        except google_exceptions.PreconditionFailed:
+            continue
 
 
 def _tokens_for(db, uids: list[str]) -> list[str]:

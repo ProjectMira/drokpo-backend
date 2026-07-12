@@ -1,6 +1,14 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    // Ad creative uploaded by hand from the Firebase console (docs/ADS.md).
+    // Signed-in members need read access so ad cards in the Discover deck
+    // can resolve download URLs; nothing writes here from the client.
+    match /ads/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
     match /users/{uid}/photos/{fileName} {
       allow read: if request.auth != null;
       allow write: if request.auth != null

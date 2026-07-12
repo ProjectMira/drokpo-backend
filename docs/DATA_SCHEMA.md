@@ -22,6 +22,8 @@ reports/{reportId}
 
 blocks/{uid}
   └── blockedUsers/{blockedUid}
+
+ads/{adId}
 ```
 
 There is no top-level `chats` or `likes` collection — swipes live under the swiping user, and messages live under the match they belong to, since both are always queried in that scoped context.
@@ -40,13 +42,14 @@ The profile document. One per Firebase Auth account, created by `POST /onboardin
 | `interests` | array\<string\> | onboarding, profile update | Free-text tags (e.g. "momo cooking", "gorshey", "hiking") — drives the feed's shared-interest ranking in `get_candidates` |
 | `socials` | map `{ instagram: string, youtube?, tiktok?, facebook?, x?, wechat? }` | onboarding, profile update | `instagram` is **required** at onboarding and can be changed but never cleared (validated in [user.py](../backend/app/models/user.py)); other platforms are optional. Partial updates merge via dotted paths (`socials.youtube`) so omitted platforms are untouched |
 | `bio` | string | onboarding, profile update | |
-| `occupation` | string | profile update only | Not collected at onboarding, only editable afterward |
-| `education` | string | profile update only | Same as `occupation` |
+| `occupation` | string | onboarding, profile update | Current job / profession |
+| `education` | string | onboarding, profile update | Education level (e.g. "Bachelor's", "Monastic education") |
+| `answers` | map\<string, string\> | onboarding, profile update | Profile Q&A prompts ("Chai or butter tea?", "Places I've travelled to", favourite movies/music, …). Keys are stable question ids the app defines; capped at 30 entries × 500 chars, validated in [user.py](../backend/app/models/user.py) `clean_answers`. Replaced wholesale on update; empty values are dropped |
 | `region` | string | onboarding, profile update | Free text, e.g. "U-Tsang", "Kham", "Amdo", or a diaspora city |
 | `languages` | array\<string\> | onboarding, profile update | |
 | `location` | map `{ lat: number, lng: number, geohash: string }` | onboarding, profile update | `geohash` is always recomputed server-side ([geo.py](../backend/app/services/geo.py)) — a client sends only lat/lng and can never desync the geohash |
 | `preferences` | map `{ ageMin: number, ageMax: number, distanceKm: number }` | onboarding, profile update | `ageMin`/`ageMax` drive the feed's age filter. Partial updates merge via dotted field paths (`preferences.ageMin`), so sending only `distanceKm` does not reset the others |
-| `photos` | array of maps `{ storagePath: string, order: number }` | backend, via `add_photo`/`remove_photo` | Capped at 6 (`MAX_PHOTOS` in [users.py](../backend/app/services/users.py)); `add_photo` rejects further attaches with a 400. No `url` field is stored — the client derives a download URL from `storagePath` itself via the Storage SDK, since [storage.rules](../storage.rules) allows any signed-in user to read photo blobs |
+| `photos` | array of maps `{ storagePath: string, order: number, url: string }` | backend, via `add_photo`/`remove_photo` | Capped at 6 (`MAX_PHOTOS` in [users.py](../backend/app/services/users.py)); `add_photo` rejects further attaches with a 400. `url` is a stable token download URL minted server-side at attach time ([storage.py](../backend/app/services/storage.py) `ensure_download_url`, which also stamps `Cache-Control` on the blob) — the client renders it directly instead of paying a Storage-SDK `getDownloadURL()` round-trip per photo. Photos attached before `url` existed are covered by `backend/scripts/backfill_photo_urls.py`; clients should still fall back to deriving from `storagePath` if `url` is absent |
 | `fcmTokens` | array\<string\> | backend, via `POST`/`DELETE /profile/me/fcm-tokens` | Device tokens the notification Cloud Functions ([functions/main.py](../functions/main.py)) fan out to; the client registers its token after sign-in |
 | `status` | string: `"active"` \| `"paused"` \| `"banned"` | backend, set to `"active"` at creation | No endpoint currently transitions it to `"paused"` or `"banned"` — this is a placeholder for a future moderation/self-pause feature |
 | `onboardingComplete` | boolean | backend, flipped `true` by `POST /onboarding/complete` | Gates access to `GET /feed` |
@@ -164,6 +167,26 @@ Marker documents — existence is the signal, there's no meaningful payload beyo
 
 ---
 
+## `ads/{adId}`
+
+Sponsored cards interleaved into the Discover deck (one after every 3 real profiles, client-side). Authored **by hand in the Firebase console** — there is no admin API. Served by `GET /api/feed` (`ads` key, via [ads.py](../backend/app/services/ads.py) `list_active`); impressions/clicks are bumped by `POST /api/ads/{adId}/events`. See [ADS.md](ADS.md) for the how-to.
+
+| Field | Type | Notes |
+|---|---|---|
+| `active` | boolean | **Required.** Only `active == true` ads are served; flip to `false` to pull an ad instantly |
+| `title` | string | **Required.** Card headline |
+| `linkUrl` | string | **Required.** Opened in the in-app browser when a member likes the ad. Ads missing `title` or `linkUrl` are skipped |
+| `body` | string | Optional description shown on the card |
+| `ctaLabel` | string | Optional call-to-action label (defaults to "Learn more" in the app) |
+| `imageUrl` | string | Optional public https image URL |
+| `photos` | array of maps `{ storagePath?: string, url?: string }` | Optional, same shape as profile photos; `storagePath` should live under `ads/` in Storage (readable by any signed-in user per [storage.rules](../storage.rules)). `imageUrl` is a convenience shorthand for a single-image ad |
+| `order` | number | Sort key, lowest first; defaults to 0 |
+| `impressions` / `clicks` | number | Counters incremented by the events endpoint — never sent to clients |
+
+**Access rule:** no client access (deny-by-default; the collection has no rules entry). Everything flows through the API.
+
+---
+
 ## Composite indexes
 
 Firestore requires an explicit composite index whenever a query combines an equality filter with a range filter, or `array-contains` with another filter. Declared in [firestore.indexes.json](../firestore.indexes.json):
@@ -173,6 +196,7 @@ Firestore requires an explicit composite index whenever a query combines an equa
 | `users` | `status` (==) + `location.geohash` (range) | The feed candidate query in `get_candidates` |
 | `matches` | `users` (array-contains) + `status` (==) | `GET /matches` listing a user's active matches |
 | `messages` (collection-group scope) | `senderId` (==) + `createdAt` (desc) | `GET /messages/sent` — all messages the caller has sent, across every match |
+| `swipes` (collection-group scope) | `toUid` (==) + `action` (==) | `GET /swipes/received?action=like` — the action filter runs in the query so `limit` counts likes, not likes-plus-passes |
 
 ---
 
