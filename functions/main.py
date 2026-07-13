@@ -1,4 +1,6 @@
+import html
 import io
+import os
 import uuid
 
 from firebase_admin import firestore, initialize_app, messaging, storage
@@ -15,6 +17,10 @@ JPEG_QUALITY = 82
 # Must match PHOTO_CACHE_CONTROL in backend/app/services/storage.py.
 PHOTO_CACHE_CONTROL = "public, max-age=2592000"
 
+# Who gets notified when a new community registers — see docs/COMMUNITIES.md
+# for the full registration -> approval email loop.
+ADMIN_EMAIL = os.environ.get("DROKPO_ADMIN_EMAIL", "ta3tsering@gmail.com")
+
 
 @storage_fn.on_object_finalized(memory=options.MemoryOption.MB_512)
 def optimize_photo(event: storage_fn.CloudEvent[storage_fn.StorageObjectData]) -> None:
@@ -28,7 +34,8 @@ def optimize_photo(event: storage_fn.CloudEvent[storage_fn.StorageObjectData]) -
     obj = event.data
     name = obj.name or ""
     is_profile_photo = name.startswith("users/") and "/photos/" in name
-    if not is_profile_photo and not name.startswith("ads/"):
+    is_community_photo = name.startswith("communities/") and "/photos/" in name
+    if not is_profile_photo and not is_community_photo and not name.startswith("ads/"):
         return
     if not (obj.content_type or "").startswith("image/"):
         return
@@ -178,3 +185,108 @@ def on_message_created(event: firestore_fn.Event) -> None:
         message.get("text", "")[:100],
         {"type": "message", "matchId": match_id},
     )
+
+
+# --- Community registration emails ------------------------------------------
+#
+# Delivery is the Firebase "Trigger Email" extension (firebase/firestore-
+# send-email), watching the `mail` collection — a one-time manual install
+# with SMTP credentials, documented in docs/COMMUNITIES.md. Until that
+# extension is installed, docs written here simply queue harmlessly.
+
+
+def _esc(value) -> str:
+    # Community-supplied fields (name, description, ...) are untrusted input
+    # embedded into an HTML email; escape before interpolating.
+    return html.escape(str(value)) if value else ""
+
+
+def _queue_email(db, to: str, subject: str, body_html: str) -> None:
+    db.collection("mail").add({"to": [to], "message": {"subject": subject, "html": body_html}})
+
+
+def _registration_email_html(uid: str, data: dict) -> str:
+    contact = data.get("contactPerson") or {}
+    address = data.get("address") or {}
+    address_line = ", ".join(
+        filter(None, [address.get("line1"), address.get("city"), address.get("state"),
+                       address.get("country"), address.get("postalCode")])
+    )
+    rows = [
+        ("Name", data.get("name")),
+        ("Description", data.get("description")),
+        ("Website", data.get("website")),
+        ("Phone", data.get("phone")),
+        ("Email", data.get("email")),
+        ("Contact person", contact.get("name")),
+        ("Contact role", contact.get("role")),
+        ("Contact phone", contact.get("phone")),
+        ("Contact email", contact.get("email")),
+        ("Address", address_line),
+    ]
+    rows_html = "".join(
+        f"<tr><td><b>{_esc(label)}</b></td><td>{_esc(value)}</td></tr>" for label, value in rows if value
+    )
+    console_url = (
+        f"https://console.firebase.google.com/project/drokpo-backend/firestore/data/~2Fcommunities~2F{uid}"
+    )
+    return (
+        "<p>A new community registered on Drokpo and is awaiting review.</p>"
+        f"<table>{rows_html}</table>"
+        f'<p><a href="{_esc(console_url)}">Open in the Firebase console</a> — set '
+        f'<code>verification</code> to <code>"verified"</code> to approve it '
+        '(see docs/COMMUNITIES.md).</p>'
+    )
+
+
+@firestore_fn.on_document_created(document="communities/{uid}")
+def on_community_created(event: firestore_fn.Event) -> None:
+    data = event.data.to_dict() or {}
+    uid = event.params["uid"]
+    db = firestore.client()
+    try:
+        _queue_email(
+            db,
+            ADMIN_EMAIL,
+            f"New community registration: {data.get('name', uid)}",
+            _registration_email_html(uid, data),
+        )
+    except Exception:
+        # Registration itself already succeeded; a queueing failure here
+        # must never surface as an error to the registering community.
+        pass
+
+
+@firestore_fn.on_document_updated(document="communities/{uid}")
+def on_community_verification_changed(event: firestore_fn.Event) -> None:
+    before = event.data.before.to_dict() if event.data.before else {}
+    after = event.data.after.to_dict() if event.data.after else {}
+    before_status, after_status = (before or {}).get("verification"), (after or {}).get("verification")
+    if before_status == after_status:
+        return
+
+    email = (after or {}).get("email")
+    if not email:
+        return  # nothing to send to (shouldn't happen for new communities — email is required)
+
+    name = (after or {}).get("name") or "Your community"
+    db = firestore.client()
+    try:
+        if after_status == "verified":
+            _queue_email(
+                db,
+                email,
+                f"{name} is approved on Drokpo",
+                f"<p>Good news — <b>{_esc(name)}</b> is now verified on Drokpo. You can publish "
+                "posts, and your community now appears in the directory and Discover feed.</p>",
+            )
+        elif after_status == "rejected":
+            _queue_email(
+                db,
+                email,
+                "Update on your Drokpo community registration",
+                f"<p>We weren't able to approve <b>{_esc(name)}</b>'s registration on Drokpo at "
+                "this time. Reply to this email if you have questions.</p>",
+            )
+    except Exception:
+        pass

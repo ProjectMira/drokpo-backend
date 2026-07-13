@@ -1,7 +1,20 @@
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
 
-from app.routers import ads, feed, matches, messages, onboarding, profile, reports, swipes
+from app.routers import (
+    account,
+    ads,
+    communities,
+    feed,
+    matches,
+    messages,
+    news,
+    onboarding,
+    posts,
+    profile,
+    reports,
+    swipes,
+)
 
 app = FastAPI(title="Drokpo API")
 
@@ -24,14 +37,18 @@ async def no_store(request: Request, call_next):
 # unstripped, so every route must live under /api to be reachable through
 # the Hosting domain.
 api = APIRouter(prefix="/api")
+api.include_router(account.router)
 api.include_router(onboarding.router)
 api.include_router(profile.router)
+api.include_router(communities.router)
+api.include_router(posts.router)
 api.include_router(feed.router)
 api.include_router(swipes.router)
 api.include_router(matches.router)
 api.include_router(messages.router)
 api.include_router(reports.router)
 api.include_router(ads.router)
+api.include_router(news.router)
 app.include_router(api)
 
 

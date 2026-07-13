@@ -2,7 +2,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.dependencies import get_current_uid
+from app.dependencies import require_person_uid
 from app.models.swipe import SwipeIn
 from app.services import matching as matching_service
 from app.services.matching import BlockedError, MatchedError
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/swipes", tags=["swipes"])
 
 @router.get("")
 def list_swipes(
-    uid: str = Depends(get_current_uid),
+    uid: str = Depends(require_person_uid),
     action: Literal["like", "pass", "superlike"] | None = Query(default=None),
     limit: int = Query(default=100, le=500),
 ):
@@ -22,7 +22,7 @@ def list_swipes(
 
 @router.get("/received")
 def list_received_swipes(
-    uid: str = Depends(get_current_uid),
+    uid: str = Depends(require_person_uid),
     action: Literal["like", "pass", "superlike"] | None = Query(default=None),
     limit: int = Query(default=100, le=500),
 ):
@@ -31,7 +31,7 @@ def list_received_swipes(
 
 
 @router.post("/{target_uid}")
-def swipe(target_uid: str, payload: SwipeIn, uid: str = Depends(get_current_uid)):
+def swipe(target_uid: str, payload: SwipeIn, uid: str = Depends(require_person_uid)):
     if target_uid == uid:
         raise HTTPException(status_code=400, detail="Cannot swipe on yourself")
     try:
@@ -42,7 +42,7 @@ def swipe(target_uid: str, payload: SwipeIn, uid: str = Depends(get_current_uid)
 
 
 @router.delete("/{target_uid}")
-def undo_swipe(target_uid: str, uid: str = Depends(get_current_uid)):
+def undo_swipe(target_uid: str, uid: str = Depends(require_person_uid)):
     # Rewind: forget the caller's last swipe on target_uid so they reappear
     # in the feed. Refused once the pair has an active match.
     try:

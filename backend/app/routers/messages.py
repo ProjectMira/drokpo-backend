@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.dependencies import get_current_uid
+from app.dependencies import require_person_uid
 from app.models.message import MessageIn
 from app.services import messages as messages_service
 from app.services.messages import MatchClosedError, NotParticipantError
@@ -9,7 +9,7 @@ router = APIRouter(tags=["messages"])
 
 
 @router.post("/matches/{match_id}/messages")
-def send_message(match_id: str, payload: MessageIn, uid: str = Depends(get_current_uid)):
+def send_message(match_id: str, payload: MessageIn, uid: str = Depends(require_person_uid)):
     try:
         message_id = messages_service.send_message(match_id, uid, payload.text)
     except NotParticipantError as exc:
@@ -22,7 +22,7 @@ def send_message(match_id: str, payload: MessageIn, uid: str = Depends(get_curre
 @router.get("/matches/{match_id}/messages")
 def list_messages(
     match_id: str,
-    uid: str = Depends(get_current_uid),
+    uid: str = Depends(require_person_uid),
     limit: int = Query(default=30, le=100),
     before: str | None = Query(default=None, description="Message ID to page back from"),
 ):
@@ -34,7 +34,7 @@ def list_messages(
 
 
 @router.post("/matches/{match_id}/read")
-def mark_read(match_id: str, uid: str = Depends(get_current_uid)):
+def mark_read(match_id: str, uid: str = Depends(require_person_uid)):
     try:
         messages_service.mark_read(match_id, uid)
     except NotParticipantError as exc:
@@ -43,5 +43,5 @@ def mark_read(match_id: str, uid: str = Depends(get_current_uid)):
 
 
 @router.get("/messages/sent")
-def list_sent_messages(uid: str = Depends(get_current_uid), limit: int = Query(default=50, le=200)):
+def list_sent_messages(uid: str = Depends(require_person_uid), limit: int = Query(default=50, le=200)):
     return {"messages": messages_service.list_sent(uid, limit)}

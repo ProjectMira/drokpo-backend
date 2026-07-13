@@ -23,6 +23,21 @@ def client():
     app.dependency_overrides.clear()
 
 
+@pytest.fixture(autouse=True)
+def default_account_type(monkeypatch):
+    """require_person_uid/require_community_uid (app/dependencies.py) each do
+    their own Firestore-backed check before a gated route ever runs. Most
+    existing tests exercise person-only endpoints and never touch account-type
+    setup at all, so default TEST_UID to "an existing person" here — the vast
+    majority of tests need nothing further. Tests that care about the account
+    type (onboarding, communities, RBAC) override these same two targets
+    explicitly, which simply wins for the rest of that test."""
+    monkeypatch.setattr(
+        "app.services.users.get_profile", lambda uid: {"uid": uid} if uid == TEST_UID else None
+    )
+    monkeypatch.setattr("app.services.communities.community_exists", lambda uid: False)
+
+
 @pytest.fixture
 def anon_client():
     # No auth override — exercises the real get_current_uid dependency.
@@ -44,6 +59,34 @@ def onboarding_payload():
             "socials": {"instagram": "tenzin_la"},
             "location": {"lat": 27.7172, "lng": 85.324},
         }
+        payload.update(overrides)
+        return payload
+
+    return make
+
+
+@pytest.fixture
+def community_onboarding_payload():
+    def make(**overrides):
+        payload = {
+            "name": "Tibetan Association of NY",
+            "description": "Community organization serving Tibetans in the New York area.",
+            "website": "https://example.org",
+            "phone": "+1-555-0100",
+            "email": "hello@example.org",
+            "contactPerson": {"name": "Dolma", "role": "Coordinator", "email": "dolma@example.org"},
+            "address": {"line1": "123 Main St", "city": "New York", "state": "NY", "country": "USA"},
+        }
+        payload.update(overrides)
+        return payload
+
+    return make
+
+
+@pytest.fixture
+def community_post_payload():
+    def make(**overrides):
+        payload = {"kind": "announcement", "title": "Losar celebration", "body": "Join us!"}
         payload.update(overrides)
         return payload
 

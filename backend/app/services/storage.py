@@ -15,6 +15,10 @@ def photo_path_prefix(uid: str) -> str:
     return f"users/{uid}/photos/"
 
 
+def community_photo_path_prefix(uid: str) -> str:
+    return f"communities/{uid}/photos/"
+
+
 def delete_blob(storage_path: str) -> None:
     blob = get_bucket().blob(storage_path)
     if blob.exists():

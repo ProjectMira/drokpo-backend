@@ -1,4 +1,16 @@
+import pytest
 from conftest import TEST_UID
+
+
+@pytest.fixture(autouse=True)
+def no_existing_account(monkeypatch):
+    # The onboarding endpoint now guards against cross-type re-creation
+    # (a uid already registered as the other account type); stub both checks
+    # to "doesn't exist yet" so tests below exercise the create path, same as
+    # before this guard existed. Tests that specifically exercise the guard
+    # override these within the test body.
+    monkeypatch.setattr("app.services.communities.community_exists", lambda uid: False)
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
 
 
 def test_create_profile(client, onboarding_payload, monkeypatch):

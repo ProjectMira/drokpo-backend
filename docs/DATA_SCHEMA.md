@@ -13,7 +13,8 @@ Cloud Firestore is document/collection-based, not tables-and-rows — there's no
 
 ```
 users/{uid}
-  └── swipes/{targetUid}
+  ├── swipes/{targetUid}
+  └── memberships/{cid}
 
 matches/{matchId}
   └── messages/{messageId}
@@ -24,6 +25,17 @@ blocks/{uid}
   └── blockedUsers/{blockedUid}
 
 ads/{adId}
+
+communities/{uid}
+  └── members/{memberUid}
+
+communityPosts/{postId}
+  ├── votes/{uid}
+  └── rsvps/{uid}
+
+news/{newsId}
+
+mail/{autoId}
 ```
 
 There is no top-level `chats` or `likes` collection — swipes live under the swiping user, and messages live under the match they belong to, since both are always queried in that scoped context.
@@ -187,6 +199,108 @@ Sponsored cards interleaved into the Discover deck (one after every 3 real profi
 
 ---
 
+## `communities/{uid}` — doc ID = the community's Firebase Auth uid
+
+A community/organization account — an alternative to `users/{uid}` for the same Firebase Auth uid; a given uid is registered as exactly one or the other, enforced by a 409 on whichever onboarding endpoint (`POST /api/onboarding` vs `POST /api/communities/onboarding`) runs second. Created by `POST /api/communities/onboarding` ([communities.py](../backend/app/services/communities.py) `create_community`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | 2–80 chars |
+| `description` | string | ≤2000 chars |
+| `website` | string \| null | https URL only |
+| `phone` / `email` | string \| null | |
+| `contactPerson` | map `{name, role?, phone?, email?}` | `name` required |
+| `address` | map `{line1?, city, state?, country, postalCode?}` | `city`/`country` required |
+| `socials` | map, same shape as a person's `socials` | all optional — no required handle here |
+| `photos` | array of maps `{storagePath, order, url}` | capped at 6, same minted-URL flow as user photos; paths live under `communities/{uid}/photos/` in Storage |
+| `verification` | string: `"pending"` \| `"verified"` \| `"rejected"` | starts `"pending"`; flipped by hand in the console — see [COMMUNITIES.md](COMMUNITIES.md) |
+| `memberCount` | number | maintained with `firestore.Increment` inside the join/leave batch — never recomputed by scanning `members` |
+| `createdAt` / `updatedAt` | Timestamp | backend |
+
+**Access rule:** no client access (deny-by-default, same as `ads`) — everything flows through the API.
+
+### `communities/{cid}/members/{uid}` and `users/{uid}/memberships/{cid}`
+
+Bidirectional marker docs, written in one batch by `join_community`/`leave_community` ([communities.py](../backend/app/services/communities.py)) — same pattern as `blocks`. `memberships/{cid}` denormalizes `communityName` so "my communities" can render before hydrating full community docs; `members/{uid}` has no payload beyond `createdAt`.
+
+Member *lists* (`GET /api/communities/{cid}/members`) are members-only — the caller must either be a member of `{cid}` or be `{cid}` itself (`is_member_or_self`); everyone else only ever sees the aggregate `memberCount`. This is a deliberate choice, not an oversight: this app hosts organizing communities (protests, cultural events) for a diaspora audience, where a publicly enumerable member roster is a real safety concern. The member list itself returns slim profiles only (`uid`, `displayName`, first photo, `region`) — never the full dating-card view (bio, socials, prompts).
+
+**Access rule:** no client access.
+
+---
+
+## `communityPosts/{postId}` — top-level, auto-generated ID
+
+A community's post, in one of four kinds. Top-level rather than a subcollection of `communities/{cid}` so the Discover feed can query across every community's posts without a collection-group join. Created by `POST /api/communities/me/posts` ([communityposts.py](../backend/app/services/communityposts.py) `create_post`) — refused with 403 unless the calling community's `verification` is `"verified"`.
+
+| Field | Type | Notes |
+|---|---|---|
+| `communityId` | string | the owning community's uid |
+| `communityName` / `communityLogoUrl` | string \| null | denormalized at creation time from the community doc, so the feed/list views never join back to `communities` per post |
+| `kind` | string: `"announcement"` \| `"link"` \| `"poll"` \| `"event"` | |
+| `title` | string | ≤160 chars; the poll question for `kind == "poll"`, the event name for `kind == "event"` |
+| `body` | string | ≤2000 chars, optional |
+| `imageUrl` | string \| null | resolved from an uploaded community photo (`photoStoragePath`, must be under the community's own `communities/{cid}/photos/` prefix) or a plain https URL — same dual shape as ads |
+| `linkUrl` / `ctaLabel` | string \| null | `linkUrl` required for `kind == "link"`; optional on `kind == "event"` (e.g. a registration page); opened in the in-app browser on swipe-right, mirroring ads |
+| `poll` | map `{options: [{id, label}], counts: {[id]: number}}` \| null | required for `kind == "poll"`, 2–4 options; `id`s (`"opt1"`, `"opt2"`, …) are assigned server-side and are immutable once created — votes reference them |
+| `eventAt` | string \| null | required for `kind == "event"` — ISO 8601 datetime with a UTC offset (validated in [community_post.py](../backend/app/models/community_post.py), must be in the future at creation) |
+| `location` | string \| null | free text, ≤200 chars, `kind == "event"` only |
+| `attendeeCount` | number \| null | `kind == "event"` only; maintained transactionally alongside `rsvps` (never recomputed by scanning the subcollection), same pattern as `poll.counts` |
+| `active` | boolean | `true` at creation; a community can flip it `false` to unpublish, but posts are otherwise immutable (no field lets a poll's options or an event's date change post-creation) |
+| `impressions` / `clicks` | number | same convention as ads — bumped by `POST /api/posts/{postId}/events`, never sent to clients |
+| `createdAt` / `updatedAt` | Timestamp | backend |
+
+**Access rule:** no client access — everything flows through the API. `GET /api/communities/{cid}/posts` serves only `active == true` posts to everyone *except* the community itself, which also sees its own unpublished posts (so its post-manager screen can show and let it re-publish them) — see `list_posts` in [communityposts.py](../backend/app/services/communityposts.py). The Discover feed additionally drops posts from any community whose `verification` isn't `"verified"`, and any event whose `eventAt` has already passed, at read time (so un-verifying a community, or an event simply passing, both pull the post from the feed without touching the doc itself).
+
+### `communityPosts/{postId}/votes/{uid}`
+
+One doc per voter. `{optionId, createdAt, updatedAt}`. Written inside a Firestore transaction ([communityposts.py](../backend/app/services/communityposts.py) `_vote_transaction`) that also updates the parent post's `poll.counts` — reads both the post and the caller's existing vote before any write (Firestore's read-before-write rule), so a changed vote atomically moves the count from the old option to the new one. Re-voting for the same option is a no-op (no write at all).
+
+**Access rule:** no client access.
+
+### `communityPosts/{postId}/rsvps/{uid}`
+
+One doc per attendee, `{createdAt}`. Same transactional shape as `votes` (`_rsvp_transaction` in [communityposts.py](../backend/app/services/communityposts.py)): reads the post and the caller's existing RSVP before any write, then sets or deletes the marker and moves `attendeeCount` by exactly one. RSVPing when already going, or un-RSVPing when not, is a no-op. `POST /api/posts/{postId}/rsvp` (going) and `DELETE /api/posts/{postId}/rsvp` (not going) — persons only.
+
+**Access rule:** no client access.
+
+---
+
+## `news/{newsId}` — doc ID = `sha1(canonical sourceUrl)[:20]`
+
+A summarized news card for the Discover feed, authored entirely by the `news-digest` Claude skill (`.claude/skills/news-digest/`), never by the backend or the app. The backend only reads active docs and bumps impression/click counters ([news.py](../backend/app/services/news.py)) — treat the skill's `scripts/news_admin.py` as the authoritative writer for this collection's field shapes.
+
+| Field | Type | Notes |
+|---|---|---|
+| `active` | boolean | flipped `false` by the skill's prune step (default: articles older than 10 days, or beyond the 40 most-recent active) |
+| `title` | string | ≤160 chars |
+| `gist` | string | ≤240 chars — the only text shown on the Discover card itself |
+| `summary` | string | ≤5000 chars — shown in the tap-through detail view; an original summary the skill writes, not a scrape of the source |
+| `sourceUrl` | string | the original article; opened in the in-app browser on swipe-right, never the summary text itself |
+| `sourceName` | string | e.g. `"Phayul"` — shown as attribution |
+| `imageUrl` | string \| null | the article's share image, extracted from its page metadata |
+| `publishedAt` | string \| null | ISO date/datetime from the source article |
+| `order` | number | **the negative of the published epoch-seconds** — the same "lowest `order` serves first" convention as `ads`, which happens to sort newest-first here since a more recent article has a larger (less negative) epoch |
+| `impressions` / `clicks` | number | bumped by `POST /api/news/{newsId}/events`, never sent to clients |
+| `createdAt` / `updatedAt` | Timestamp | set by the skill at upsert time |
+
+**Access rule:** no client access — everything flows through `GET /api/feed` (`news` key) and the events endpoint.
+
+---
+
+## `mail/{autoId}` — auto-generated ID
+
+Not app data — the queue the [Trigger Email extension](https://extensions.dev/extensions/firebase/firestore-send-email) watches to actually send email. Written only by two Cloud Functions ([functions/main.py](../functions/main.py)): `on_community_created` (registration notice to the admin) and `on_community_verification_changed` (approval/rejection notice to the community) — see [COMMUNITIES.md](COMMUNITIES.md) for the full loop and the extension's one-time setup.
+
+| Field | Type | Notes |
+|---|---|---|
+| `to` | array\<string\> | recipient email address(es) |
+| `message` | map `{subject: string, html: string}` | `html` fields interpolate community-supplied text, so it's always HTML-escaped before interpolation (`_esc` in functions/main.py) |
+
+**Access rule:** no client access — Cloud Functions write it, the extension reads and deletes/updates it (adds its own `delivery` status fields, which this app never reads back).
+
+---
+
 ## Composite indexes
 
 Firestore requires an explicit composite index whenever a query combines an equality filter with a range filter, or `array-contains` with another filter. Declared in [firestore.indexes.json](../firestore.indexes.json):
@@ -197,6 +311,12 @@ Firestore requires an explicit composite index whenever a query combines an equa
 | `matches` | `users` (array-contains) + `status` (==) | `GET /matches` listing a user's active matches |
 | `messages` (collection-group scope) | `senderId` (==) + `createdAt` (desc) | `GET /messages/sent` — all messages the caller has sent, across every match |
 | `swipes` (collection-group scope) | `toUid` (==) + `action` (==) | `GET /swipes/received?action=like` — the action filter runs in the query so `limit` counts likes, not likes-plus-passes |
+| `communities` | `verification` (==) + `memberCount` (desc) | `GET /communities` — the directory, verified communities biggest-first |
+| `communityPosts` | `communityId` (==) + `active` (==) + `createdAt` (desc) | `GET /communities/{cid}/posts` for anyone but the community itself, **and** `GET /communities/feed`'s per-chunk `communityId in [...]` query in `list_feed_for_member` — Firestore serves `in` queries from the same composite index as the `==` case, just fanned out into one range scan per value |
+| `communityPosts` | `communityId` (==) + `createdAt` (desc) | Same endpoint when the community views its own posts (includes unpublished ones, so no `active` filter) |
+| `communityPosts` | `active` (==) + `createdAt` (desc) | The Discover feed's community-post query in `list_active_for_feed` |
+
+`news` needs no composite index — `list_active` filters `active == true` in the query and sorts by `order` in memory (same as `ads.list_active`), since the active set is small (capped at ~40 by the skill's prune step).
 
 ---
 
