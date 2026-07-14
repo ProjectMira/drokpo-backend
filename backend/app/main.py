@@ -6,6 +6,7 @@ from app.routers import (
     ads,
     communities,
     feed,
+    likes,
     matches,
     messages,
     news,
@@ -49,6 +50,7 @@ api.include_router(messages.router)
 api.include_router(reports.router)
 api.include_router(ads.router)
 api.include_router(news.router)
+api.include_router(likes.router)
 app.include_router(api)
 
 

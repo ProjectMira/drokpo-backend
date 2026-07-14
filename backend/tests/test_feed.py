@@ -105,6 +105,39 @@ def test_feed_announcement_only_posts_skip_hydration(client, monkeypatch):
     assert client.get("/api/feed").json()["communityPosts"] == posts
 
 
+def test_feed_items_shape(client, monkeypatch):
+    candidates = [{"uid": f"u{i}"} for i in range(3)]
+    news = [{"newsId": "n1", "title": "Headline", "gist": "Gist", "sourceUrl": "https://s.example"}]
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: {"onboardingComplete": True})
+    monkeypatch.setattr("app.services.users.get_candidates", lambda uid, prof, limit: candidates)
+    monkeypatch.setattr("app.services.news.list_active", lambda: news)
+    body = client.get("/api/feed", params={"shape": "items"}).json()
+    assert set(body.keys()) == {"items"}
+    types = [item["type"] for item in body["items"]]
+    assert types[:4] == ["person", "person", "person", "news"]
+    assert body["items"][3]["data"]["newsId"] == "n1"
+
+
+def test_feed_items_shape_never_empty_without_candidates(client, monkeypatch):
+    news = [
+        {"newsId": f"n{i}", "title": "T", "gist": "G", "sourceUrl": "https://s.example"}
+        for i in range(20)
+    ]
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: {"onboardingComplete": True})
+    monkeypatch.setattr("app.services.users.get_candidates", lambda uid, prof, limit: [])
+    monkeypatch.setattr("app.services.news.list_active", lambda: news)
+    body = client.get("/api/feed", params={"shape": "items"}).json()
+    assert len(body["items"]) == 12
+    assert all(item["type"] == "news" for item in body["items"])
+
+
+def test_feed_default_shape_unchanged(client, monkeypatch):
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: {"onboardingComplete": True})
+    monkeypatch.setattr("app.services.users.get_candidates", lambda uid, prof, limit: [])
+    body = client.get("/api/feed").json()
+    assert set(body.keys()) == {"candidates", "ads", "news", "communityPosts"}
+
+
 def test_feed_limit_capped(client, monkeypatch):
     monkeypatch.setattr("app.services.users.get_profile", lambda uid: {"onboardingComplete": True})
     assert client.get("/api/feed", params={"limit": 51}).status_code == 422

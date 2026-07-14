@@ -35,6 +35,20 @@ def record_post_event(post_id: str, payload: PostEventIn, uid: str = Depends(get
     return {"ok": True}
 
 
+@router.put("/{post_id}/like")
+def like_post(post_id: str, uid: str = Depends(require_person_uid)):
+    try:
+        return communityposts_service.like(uid, post_id)
+    except communityposts_service.PostNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.delete("/{post_id}/like")
+def unlike_post(post_id: str, uid: str = Depends(require_person_uid)):
+    communityposts_service.unlike(uid, post_id)
+    return {"ok": True}
+
+
 @router.post("/{post_id}/rsvp")
 def rsvp_to_event(post_id: str, uid: str = Depends(require_person_uid)):
     try:

@@ -109,6 +109,24 @@ def get_joined_communities_feed(
     return {"posts": communityposts_service.list_feed_for_member(uid, limit)}
 
 
+@router.get("/home")
+def get_communities_home(
+    uid: str = Depends(require_person_uid), limit: int = Query(default=30, le=50)
+):
+    """One call for the person-side Communities screen: the joined-communities
+    rail plus a typed feed of their posts with sponsored cards interleaved."""
+    from app.services import ads as ads_service
+    from app.services import discover as discover_service
+
+    return {
+        "communities": communities_service.list_my_communities(uid),
+        "items": discover_service.interleave_posts_with_ads(
+            communityposts_service.list_feed_for_member(uid, limit),
+            ads_service.list_active(),
+        ),
+    }
+
+
 @router.get("")
 def list_communities(uid: str = Depends(get_current_uid), limit: int = Query(default=50, le=50)):
     return {"communities": communities_service.list_directory(uid, limit)}

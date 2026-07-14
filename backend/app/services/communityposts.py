@@ -372,6 +372,65 @@ def list_active_for_feed(limit: int = 10) -> list[dict]:
     return result
 
 
+# ---------------------------------------------------------------------------
+# Liked posts — swiping right on a community-post card in Discover saves it
+# to the member's Likes tab (events additionally RSVP). Snapshot, not a
+# reference: a post can be unpublished by its community later, and the
+# member's saved copy must survive that.
+# ---------------------------------------------------------------------------
+
+USERS = "users"
+LIKED_POSTS = "likedPosts"
+
+
+def like(uid: str, post_id: str) -> dict:
+    """Idempotently save a snapshot to users/{uid}/likedPosts/{postId}."""
+    db = get_firestore()
+    doc = db.collection(COMMUNITY_POSTS).document(post_id).get()
+    if not doc.exists:
+        raise PostNotFoundError("Post not found")
+    data = doc.to_dict() or {}
+    snapshot = {"postId": post_id, **{k: data[k] for k in PUBLIC_POST_FIELDS if k in data}}
+    like_ref = db.collection(USERS).document(uid).collection(LIKED_POSTS).document(post_id)
+    if not like_ref.get().exists:
+        like_ref.set({**snapshot, "likedAt": firestore.SERVER_TIMESTAMP})
+        db.collection(COMMUNITY_POSTS).document(post_id).update({"likes": firestore.Increment(1)})
+    return snapshot
+
+
+def unlike(uid: str, post_id: str) -> None:
+    """Remove a saved post; missing likes are a no-op (idempotent)."""
+    from google.api_core import exceptions as google_exceptions
+
+    db = get_firestore()
+    like_ref = db.collection(USERS).document(uid).collection(LIKED_POSTS).document(post_id)
+    if not like_ref.get().exists:
+        return
+    like_ref.delete()
+    try:
+        db.collection(COMMUNITY_POSTS).document(post_id).update({"likes": firestore.Increment(-1)})
+    except google_exceptions.NotFound:
+        pass  # the post itself may have been deleted since; the unlike still stands
+
+
+def list_liked(uid: str, limit: int = 100) -> list[dict]:
+    """The member's saved posts, newest-first by like time."""
+    db = get_firestore()
+    query = (
+        db.collection(USERS)
+        .document(uid)
+        .collection(LIKED_POSTS)
+        .order_by("likedAt", direction=firestore.Query.DESCENDING)
+        .limit(limit)
+    )
+    items = []
+    for doc in query.stream():
+        data = doc.to_dict() or {}
+        liked_at = data.pop("likedAt", None)
+        items.append({**data, "likedAt": liked_at.isoformat() if hasattr(liked_at, "isoformat") else liked_at})
+    return items
+
+
 def attach_viewer_state(uid: str, posts: list[dict]) -> list[dict]:
     """Overlay the calling viewer's myVote/myRsvp onto viewer-agnostic post
     dicts (the shared feed cache can't carry them — see _to_public_posts).
