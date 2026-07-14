@@ -66,6 +66,30 @@ def get_public_communities(uids: list[str]) -> dict[str, dict]:
     return {snap.id: public_summary(snap.id, snap.to_dict()) for snap in db.get_all(refs) if snap.exists}
 
 
+# Optional fields the client may erase: an explicit "" in the PATCH body
+# deletes the stored value. Anything not listed here either has a validator
+# rejecting blanks (name, description, email, contactPerson.name,
+# socials.instagram) or is required-at-onboarding (address.city/country),
+# so a stray "" for those is dropped as "no change" rather than deleting.
+CLEARABLE_FIELDS = frozenset(
+    {
+        "website",
+        "phone",
+        "contactPerson.role",
+        "contactPerson.phone",
+        "contactPerson.email",
+        "address.line1",
+        "address.state",
+        "address.postalCode",
+        "socials.youtube",
+        "socials.tiktok",
+        "socials.facebook",
+        "socials.x",
+        "socials.wechat",
+    }
+)
+
+
 def update_community(uid: str, payload: CommunityUpdate) -> None:
     data = payload.model_dump(exclude_unset=True)
     # Same dotted-path merge trick as users_service.update_profile — a
@@ -74,10 +98,24 @@ def update_community(uid: str, payload: CommunityUpdate) -> None:
     contact_person = data.pop("contactPerson", None) or {}
     address = data.pop("address", None) or {}
     socials = data.pop("socials", None) or {}
-    updates = {k: v for k, v in data.items() if v is not None}
-    updates.update({f"contactPerson.{k}": v for k, v in contact_person.items() if v is not None})
-    updates.update({f"address.{k}": v for k, v in address.items() if v is not None})
-    updates.update({f"socials.{k}": v for k, v in socials.items() if v is not None})
+
+    updates: dict = {}
+
+    def merge(prefix: str, fields: dict) -> None:
+        for key, value in fields.items():
+            if value is None:
+                continue  # not sent / unchanged
+            dotted = f"{prefix}{key}"
+            if value == "":
+                if dotted in CLEARABLE_FIELDS:
+                    updates[dotted] = firestore.DELETE_FIELD
+                continue
+            updates[dotted] = value
+
+    merge("", data)
+    merge("contactPerson.", contact_person)
+    merge("address.", address)
+    merge("socials.", socials)
     if not updates:
         return
     updates["updatedAt"] = firestore.SERVER_TIMESTAMP

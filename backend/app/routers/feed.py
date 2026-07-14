@@ -22,5 +22,9 @@ def get_feed(uid: str = Depends(require_person_uid), limit: int = Query(default=
         "candidates": candidates,
         "ads": ads_service.list_active(),
         "news": news_service.list_active(),
-        "communityPosts": communityposts_service.list_active_for_feed(),
+        # The cached posts are viewer-agnostic; overlay this caller's poll
+        # votes and event RSVPs so the deck doesn't forget them.
+        "communityPosts": communityposts_service.attach_viewer_state(
+            uid, communityposts_service.list_active_for_feed()
+        ),
     }

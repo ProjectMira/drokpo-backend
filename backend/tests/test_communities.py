@@ -204,3 +204,83 @@ def test_delete_my_community(client, monkeypatch):
     response = client.delete("/api/communities/me")
     assert response.status_code == 200
     assert captured["uid"] == TEST_UID
+
+
+# ---------------------------------------------------------------------------
+# update_community clearing semantics — "" means "delete this optional field"
+# ---------------------------------------------------------------------------
+
+
+class _CapturingDb:
+    """Minimal Firestore stand-in: records the update() payload."""
+
+    def __init__(self, captured):
+        self._captured = captured
+
+    def collection(self, name):
+        return self
+
+    def document(self, uid):
+        return self
+
+    def update(self, updates):
+        self._captured["updates"] = updates
+
+
+def test_update_community_empty_string_clears_optional_fields(monkeypatch):
+    from firebase_admin import firestore
+
+    from app.models.community import CommunityUpdate
+    from app.services import communities as communities_service
+
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.communities.get_firestore", lambda: _CapturingDb(captured)
+    )
+    payload = CommunityUpdate.model_validate(
+        {
+            "website": "",
+            "phone": "",
+            "contactPerson": {"role": "", "phone": "+1-555-0100"},
+            "address": {"line1": "", "city": ""},
+            "socials": {"youtube": ""},
+        }
+    )
+    communities_service.update_community("cid1", payload)
+    updates = captured["updates"]
+    assert updates["website"] is firestore.DELETE_FIELD
+    assert updates["phone"] is firestore.DELETE_FIELD
+    assert updates["contactPerson.role"] is firestore.DELETE_FIELD
+    assert updates["address.line1"] is firestore.DELETE_FIELD
+    assert updates["socials.youtube"] is firestore.DELETE_FIELD
+    # Real values still pass through alongside clears.
+    assert updates["contactPerson.phone"] == "+1-555-0100"
+    # Required-at-onboarding fields are NOT clearable — a stray "" is dropped.
+    assert "address.city" not in updates
+    assert "updatedAt" in updates
+
+
+def test_update_community_all_blank_is_a_noop_for_required_fields(monkeypatch):
+    from app.models.community import CommunityUpdate
+    from app.services import communities as communities_service
+
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.communities.get_firestore", lambda: _CapturingDb(captured)
+    )
+    communities_service.update_community(
+        "cid1", CommunityUpdate.model_validate({"address": {"city": "", "country": ""}})
+    )
+    # Nothing clearable was sent → no Firestore write at all.
+    assert captured == {}
+
+
+def test_update_community_accepts_empty_website_via_router(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.communities.update_community",
+        lambda uid, payload: captured.update(payload=payload),
+    )
+    response = client.patch("/api/communities/me", json={"website": ""})
+    assert response.status_code == 200
+    assert captured["payload"].website == ""

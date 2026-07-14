@@ -66,6 +66,45 @@ def test_feed_includes_active_community_posts(client, monkeypatch):
     assert response.json() == {"candidates": [], "ads": [], "news": [], "communityPosts": posts}
 
 
+def test_feed_community_posts_carry_viewer_vote_and_rsvp(client, monkeypatch):
+    # The cached posts are viewer-agnostic; the route must overlay the
+    # caller's own poll vote / event RSVP (attach_viewer_state).
+    posts = [
+        {"postId": "p1", "kind": "poll", "title": "Pick a date"},
+        {"postId": "p2", "kind": "event", "title": "Losar", "attendeeCount": 3},
+        {"postId": "p3", "kind": "announcement", "title": "News"},
+    ]
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: {"onboardingComplete": True})
+    monkeypatch.setattr("app.services.users.get_candidates", lambda uid, prof, limit: [])
+    monkeypatch.setattr("app.services.communityposts.list_active_for_feed", lambda: posts)
+    monkeypatch.setattr("app.services.communityposts.get_firestore", lambda: None)
+    monkeypatch.setattr(
+        "app.services.communityposts._hydrate_my_votes", lambda db, uid, p: {"p1": "opt2"}
+    )
+    monkeypatch.setattr("app.services.communityposts._hydrate_my_rsvps", lambda db, uid, p: {"p2"})
+    body = client.get("/api/feed").json()
+    by_id = {p["postId"]: p for p in body["communityPosts"]}
+    assert by_id["p1"]["myVote"] == "opt2"
+    assert by_id["p2"]["myRsvp"] is True
+    assert "myVote" not in by_id["p3"] and "myRsvp" not in by_id["p3"]
+    # The shared cached dicts must NOT have been mutated with per-user state.
+    assert "myVote" not in posts[0] and "myRsvp" not in posts[1]
+
+
+def test_feed_announcement_only_posts_skip_hydration(client, monkeypatch):
+    # No poll/event in the page → attach_viewer_state must not touch Firestore.
+    posts = [{"postId": "p1", "kind": "announcement", "title": "Losar"}]
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: {"onboardingComplete": True})
+    monkeypatch.setattr("app.services.users.get_candidates", lambda uid, prof, limit: [])
+    monkeypatch.setattr("app.services.communityposts.list_active_for_feed", lambda: posts)
+
+    def explode():
+        raise AssertionError("get_firestore must not be called")
+
+    monkeypatch.setattr("app.services.communityposts.get_firestore", explode)
+    assert client.get("/api/feed").json()["communityPosts"] == posts
+
+
 def test_feed_limit_capped(client, monkeypatch):
     monkeypatch.setattr("app.services.users.get_profile", lambda uid: {"onboardingComplete": True})
     assert client.get("/api/feed", params={"limit": 51}).status_code == 422

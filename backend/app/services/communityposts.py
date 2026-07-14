@@ -370,3 +370,24 @@ def list_active_for_feed(limit: int = 10) -> list[dict]:
     ][:limit]
     _feed_cache.update(expires=time.monotonic() + _CACHE_TTL_SECONDS, limit=limit, posts=result)
     return result
+
+
+def attach_viewer_state(uid: str, posts: list[dict]) -> list[dict]:
+    """Overlay the calling viewer's myVote/myRsvp onto viewer-agnostic post
+    dicts (the shared feed cache can't carry them — see _to_public_posts).
+    Returns copies; the cached dicts themselves must never gain per-user
+    fields or one viewer's state would leak to everyone for 60 seconds."""
+    if not any(p.get("kind") in ("poll", "event") for p in posts):
+        return posts  # nothing viewer-specific to attach; skip Firestore
+    db = get_firestore()
+    my_votes = _hydrate_my_votes(db, uid, posts)
+    my_rsvps = _hydrate_my_rsvps(db, uid, posts)
+    result = []
+    for post in posts:
+        out = dict(post)
+        if out.get("kind") == "poll":
+            out["myVote"] = my_votes.get(out["postId"])
+        if out.get("kind") == "event":
+            out["myRsvp"] = out["postId"] in my_rsvps
+        result.append(out)
+    return result

@@ -147,7 +147,14 @@ class CommunityUpdate(BaseModel):
     @field_validator("website")
     @classmethod
     def website_https(cls, v: str | None) -> str | None:
-        return _https_or_none(v)
+        # Unlike onboarding, an explicit "" survives here — it means "clear
+        # this field" (update_community maps it to a field delete).
+        if v is None:
+            return None
+        v = v.strip()
+        if v and not v.startswith("https://"):
+            raise ValueError("must be an https:// URL")
+        return v
 
     @field_validator("email")
     @classmethod
