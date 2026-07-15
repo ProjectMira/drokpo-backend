@@ -153,11 +153,20 @@ def test_rsvp_to_event(client, monkeypatch):
     assert response.json() == result
 
 
-def test_rsvp_rejects_community_accounts(client, monkeypatch):
-    # RSVP is gated by require_person_uid; a community account has no
-    # users/{uid} doc, which is what makes it 403.
+def test_rsvp_allows_community_accounts(client, monkeypatch):
+    # RSVP is gated by require_account_uid — community accounts can save/RSVP
+    # to Discover content just like persons (they just can't join communities).
+    result = {"attendeeCount": 4, "going": True}
     monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
     monkeypatch.setattr("app.services.communities.community_exists", lambda uid: True)
+    monkeypatch.setattr("app.services.communityposts.rsvp", lambda post_id, uid, going: result)
+    response = client.post("/api/posts/post-1/rsvp")
+    assert response.status_code == 200
+
+
+def test_rsvp_rejects_neither_account(client, monkeypatch):
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
+    monkeypatch.setattr("app.services.communities.community_exists", lambda uid: False)
     response = client.post("/api/posts/post-1/rsvp")
     assert response.status_code == 403
 
@@ -193,8 +202,17 @@ def test_cancel_rsvp(client, monkeypatch):
     assert captured == {"post_id": "post-1", "uid": TEST_UID, "going": False}
 
 
-def test_cancel_rsvp_rejects_community_accounts(client, monkeypatch):
+def test_cancel_rsvp_allows_community_accounts(client, monkeypatch):
+    result = {"attendeeCount": 3, "going": False}
     monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
     monkeypatch.setattr("app.services.communities.community_exists", lambda uid: True)
+    monkeypatch.setattr("app.services.communityposts.rsvp", lambda post_id, uid, going: result)
+    response = client.delete("/api/posts/post-1/rsvp")
+    assert response.status_code == 200
+
+
+def test_cancel_rsvp_rejects_neither_account(client, monkeypatch):
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
+    monkeypatch.setattr("app.services.communities.community_exists", lambda uid: False)
     response = client.delete("/api/posts/post-1/rsvp")
     assert response.status_code == 403

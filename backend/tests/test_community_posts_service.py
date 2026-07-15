@@ -149,12 +149,16 @@ def test_create_post_writes_event_fields(monkeypatch):
     assert posts.added["poll"] is None
 
 
-def test_create_post_rejects_unverified_community(monkeypatch):
+def test_create_post_allows_unverified_community(monkeypatch):
+    # Open registration: verification is a badge, not a posting gate.
     monkeypatch.setattr(
         communities_service, "get_community", lambda cid: _verified_community(verification="pending")
     )
-    with pytest.raises(communityposts_service.NotVerifiedError):
-        communityposts_service.create_post("cid1", CommunityPostIn(kind="announcement", title="x"))
+    posts = StubPostsCollection()
+    monkeypatch.setattr(communityposts_service, "get_firestore", lambda: StubDB(posts))
+    post_id = communityposts_service.create_post("cid1", CommunityPostIn(kind="announcement", title="x"))
+    assert post_id
+    assert posts.added["active"] is True
 
 
 def test_create_post_rejects_missing_community(monkeypatch):
@@ -368,17 +372,17 @@ def clear_feed_cache():
     communityposts_service._feed_cache.update(expires=0.0, limit=None, posts=None)
 
 
-def test_list_active_for_feed_drops_unverified_communities(monkeypatch):
+def test_list_active_for_feed_includes_unverified_communities(monkeypatch):
+    # Open registration: the Discover feed no longer filters by verification.
     docs = [
         StubFeedDoc("p1", {"communityId": "verified-cid", "kind": "announcement", "title": "A", "active": True}),
         StubFeedDoc("p2", {"communityId": "pending-cid", "kind": "announcement", "title": "B", "active": True}),
     ]
     monkeypatch.setattr(communityposts_service, "get_firestore", lambda: StubFeedDB(docs))
-    monkeypatch.setattr(communities_service, "get_verified_uids", lambda cids: {"verified-cid"})
 
     result = communityposts_service.list_active_for_feed()
 
-    assert [p["postId"] for p in result] == ["p1"]
+    assert {p["postId"] for p in result} == {"p1", "p2"}
 
 
 def test_list_active_for_feed_drops_past_events(monkeypatch):
@@ -403,7 +407,6 @@ def test_list_active_for_feed_drops_past_events(monkeypatch):
         ),
     ]
     monkeypatch.setattr(communityposts_service, "get_firestore", lambda: StubFeedDB(docs))
-    monkeypatch.setattr(communities_service, "get_verified_uids", lambda cids: {"cid1"})
 
     result = communityposts_service.list_active_for_feed()
 
@@ -420,7 +423,6 @@ def test_list_active_for_feed_is_cached(monkeypatch):
         )
 
     monkeypatch.setattr(communityposts_service, "get_firestore", counting_db)
-    monkeypatch.setattr(communities_service, "get_verified_uids", lambda cids: {"c1"})
 
     first = communityposts_service.list_active_for_feed()
     second = communityposts_service.list_active_for_feed()

@@ -3,7 +3,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.dependencies import get_current_uid, require_person_uid
+from app.dependencies import get_current_uid, require_account_uid
 from app.services import news as news_service
 
 router = APIRouter(prefix="/news", tags=["news"])
@@ -23,7 +23,7 @@ def record_news_event(news_id: str, payload: NewsEventIn, uid: str = Depends(get
 
 
 @router.put("/{news_id}/like")
-def like_news(news_id: str, uid: str = Depends(require_person_uid)):
+def like_news(news_id: str, uid: str = Depends(require_account_uid)):
     try:
         return news_service.like(uid, news_id)
     except ValueError as exc:
@@ -31,6 +31,6 @@ def like_news(news_id: str, uid: str = Depends(require_person_uid)):
 
 
 @router.delete("/{news_id}/like")
-def unlike_news(news_id: str, uid: str = Depends(require_person_uid)):
+def unlike_news(news_id: str, uid: str = Depends(require_account_uid)):
     news_service.unlike(uid, news_id)
     return {"ok": True}

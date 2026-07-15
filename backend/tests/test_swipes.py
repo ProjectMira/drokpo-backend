@@ -9,6 +9,53 @@ def test_swipe_creates_match(client, monkeypatch):
     assert response.json() == {"matched": True, "matchId": "uidA_uidB"}
 
 
+# --- community accounts swipe as themselves, once verified -------------------
+
+
+def _as_verified_community(monkeypatch):
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
+    monkeypatch.setattr("app.services.communities.community_exists", lambda uid: True)
+    monkeypatch.setattr(
+        "app.services.communities.get_community",
+        lambda uid: {"uid": uid, "name": "TANY", "verification": "verified"},
+    )
+
+
+def test_verified_community_can_swipe(client, monkeypatch):
+    _as_verified_community(monkeypatch)
+    monkeypatch.setattr("app.services.matching.record_swipe", lambda f, t, a: None)
+    response = client.post("/api/swipes/other-uid", json={"action": "like"})
+    assert response.status_code == 200
+    assert response.json() == {"matched": False, "matchId": None}
+
+
+def test_unverified_community_cannot_swipe(client, monkeypatch):
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
+    monkeypatch.setattr("app.services.communities.community_exists", lambda uid: True)
+    monkeypatch.setattr(
+        "app.services.communities.get_community",
+        lambda uid: {"uid": uid, "name": "TANY", "verification": "pending"},
+    )
+    response = client.post("/api/swipes/other-uid", json={"action": "like"})
+    assert response.status_code == 403
+    assert "verified" in response.json()["detail"]
+
+
+def test_community_list_swipes_and_received_allowed(client, monkeypatch):
+    _as_verified_community(monkeypatch)
+    monkeypatch.setattr("app.services.matching.list_swipes", lambda uid, action, limit: [])
+    monkeypatch.setattr("app.services.matching.list_received", lambda uid, action, limit: [])
+    assert client.get("/api/swipes").status_code == 200
+    assert client.get("/api/swipes/received").status_code == 200
+
+
+def test_swipe_rejects_neither_account(client, monkeypatch):
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
+    monkeypatch.setattr("app.services.communities.community_exists", lambda uid: False)
+    response = client.post("/api/swipes/other-uid", json={"action": "like"})
+    assert response.status_code == 403
+
+
 def test_swipe_no_match(client, monkeypatch):
     monkeypatch.setattr("app.services.matching.record_swipe", lambda f, t, a: None)
     response = client.post("/api/swipes/other-uid", json={"action": "pass"})

@@ -11,10 +11,10 @@ def no_content_cards(monkeypatch):
     monkeypatch.setattr("app.services.communityposts.list_active_for_feed", lambda: [])
 
 
-def test_feed_requires_person_account(client, monkeypatch):
-    # No users/{uid} doc at all: require_person_uid rejects before the
-    # route's own "complete onboarding" check ever runs (a uid with zero
-    # profile isn't mid-onboarding, it's not a person account).
+def test_feed_requires_an_account(client, monkeypatch):
+    # No users/{uid} and no communities/{uid} doc: require_account_uid
+    # rejects before the route body ever runs (see the community-viewer
+    # tests below for the "has a communities/{uid} doc" branch).
     monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
     assert client.get("/api/feed").status_code == 403
 
@@ -152,3 +152,75 @@ def test_feed_passes_limit(client, monkeypatch):
     )
     assert client.get("/api/feed", params={"limit": 5}).status_code == 200
     assert seen["limit"] == 5
+
+
+# --- community viewers ---------------------------------------------------
+#
+# A community account has no users/{uid} profile, so it hits the "else"
+# branch: no onboarding gate, person candidates only once verified, and its
+# own posts filtered out of the mix.
+
+
+def _as_community(monkeypatch, verification="verified"):
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
+    monkeypatch.setattr("app.services.communities.community_exists", lambda uid: True)
+    monkeypatch.setattr(
+        "app.services.communities.get_community",
+        lambda uid: {"uid": uid, "verification": verification},
+    )
+
+
+def test_feed_community_viewer_not_onboarding_gated(client, monkeypatch):
+    # No onboardingComplete check applies to a community — it has no such field.
+    _as_community(monkeypatch)
+    monkeypatch.setattr("app.services.users.get_candidates_for_community", lambda uid, limit: [])
+    assert client.get("/api/feed").status_code == 200
+
+
+def test_feed_verified_community_gets_candidates(client, monkeypatch):
+    _as_community(monkeypatch, verification="verified")
+    candidates = [{"uid": "u2", "displayName": "Dolma"}]
+    monkeypatch.setattr(
+        "app.services.users.get_candidates_for_community", lambda uid, limit: candidates
+    )
+    response = client.get("/api/feed")
+    assert response.status_code == 200
+    assert response.json()["candidates"] == candidates
+
+
+def test_feed_unverified_community_gets_no_candidates(client, monkeypatch):
+    _as_community(monkeypatch, verification="pending")
+
+    def explode(uid, limit):
+        raise AssertionError("get_candidates_for_community must not be called when unverified")
+
+    monkeypatch.setattr("app.services.users.get_candidates_for_community", explode)
+    response = client.get("/api/feed")
+    assert response.status_code == 200
+    assert response.json()["candidates"] == []
+
+
+def test_feed_community_viewer_excludes_own_posts(client, monkeypatch):
+    _as_community(monkeypatch)
+    monkeypatch.setattr("app.services.users.get_candidates_for_community", lambda uid, limit: [])
+    posts = [
+        {"postId": "p1", "kind": "announcement", "communityId": "test-uid"},
+        {"postId": "p2", "kind": "announcement", "communityId": "other-community"},
+    ]
+    monkeypatch.setattr("app.services.communityposts.list_active_for_feed", lambda: posts)
+    response = client.get("/api/feed")
+    assert [p["postId"] for p in response.json()["communityPosts"]] == ["p2"]
+    # The shared cache list itself must be untouched (own-post filter runs on
+    # a copy, not the cached list).
+    assert [p["postId"] for p in posts] == ["p1", "p2"]
+
+
+def test_feed_community_viewer_items_shape(client, monkeypatch):
+    _as_community(monkeypatch)
+    candidates = [{"uid": "u2"}]
+    monkeypatch.setattr(
+        "app.services.users.get_candidates_for_community", lambda uid, limit: candidates
+    )
+    body = client.get("/api/feed", params={"shape": "items"}).json()
+    assert set(body.keys()) == {"items"}
+    assert any(item["type"] == "person" for item in body["items"])

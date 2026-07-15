@@ -142,10 +142,11 @@ def _drop_blocked(db, uid: str, swipes: list[dict]) -> list[dict]:
 
 
 def _attach_profiles(swipes: list[dict]) -> list[dict]:
-    """Join each swipe's counterpart profile; drops swipes whose profile is gone."""
-    from app.services import users as users_service
+    """Join each swipe's counterpart (person or community); drops swipes whose
+    counterpart account is gone entirely."""
+    from app.services import counterparts as counterparts_service
 
-    profiles = users_service.get_public_profiles([s["uid"] for s in swipes])
+    profiles = counterparts_service.get_public_counterparts([s["uid"] for s in swipes])
     return [{**s, "otherUser": profiles[s["uid"]]} for s in swipes if s["uid"] in profiles]
 
 

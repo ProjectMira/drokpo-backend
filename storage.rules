@@ -24,5 +24,25 @@ service firebase.storage {
                    && request.resource.size < 10 * 1024 * 1024
                    && request.resource.contentType.matches('image/.*');
     }
+
+    // Voice comments on community posts.
+    match /commentAudio/{uid}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && request.auth.uid == uid
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('audio/.*');
+    }
+
+    // Chat photo/voice messages. Recipients never read via these rules —
+    // they load the token download URL over plain HTTPS (same as post
+    // images); this `read` covers the uploader's own downloadURL() call.
+    match /chatMedia/{uid}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && request.auth.uid == uid
+                   && request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('(image|audio)/.*');
+    }
   }
 }

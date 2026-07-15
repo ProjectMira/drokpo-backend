@@ -130,3 +130,46 @@ class CommunityPostUpdate(BaseModel):
 
 class VoteIn(BaseModel):
     optionId: str
+
+
+MAX_COMMENT_TEXT_LEN = 2200
+MAX_COMMENT_AUDIO_SEC = 60
+
+
+class CommentIn(BaseModel):
+    text: str | None = None
+    # Alternative to text: a path the caller already uploaded under their own
+    # commentAudio/{uid}/ Storage prefix, resolved to a download URL by the
+    # service — same dual-input shape as a post's photoStoragePath.
+    audioStoragePath: str | None = None
+    audioDurationSec: int | None = None
+    # None = a top-level comment; otherwise the comment being replied to
+    # (replying to a reply is coerced server-side to the same top-level thread).
+    parentId: str | None = None
+
+    @field_validator("text")
+    @classmethod
+    def text_len(cls, v: str | None) -> str | None:
+        v = v.strip() if v else None
+        if v and len(v) > MAX_COMMENT_TEXT_LEN:
+            raise ValueError(f"text must be at most {MAX_COMMENT_TEXT_LEN} characters")
+        return v or None
+
+    @field_validator("audioDurationSec")
+    @classmethod
+    def duration_bounds(cls, v: int | None) -> int | None:
+        if v is not None and not (0 < v <= MAX_COMMENT_AUDIO_SEC):
+            raise ValueError(f"audioDurationSec must be between 1 and {MAX_COMMENT_AUDIO_SEC}")
+        return v
+
+    def validate_shape(self) -> None:
+        has_text = bool(self.text)
+        has_audio = bool(self.audioStoragePath)
+        if has_text == has_audio:
+            raise ValueError("exactly one of text or audioStoragePath is required")
+        if has_audio and self.audioDurationSec is None:
+            raise ValueError("audioDurationSec is required alongside audioStoragePath")
+
+
+class CommentVoteIn(BaseModel):
+    value: Literal["like", "dislike"]

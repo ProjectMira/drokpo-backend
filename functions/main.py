@@ -35,8 +35,11 @@ def optimize_photo(event: storage_fn.CloudEvent[storage_fn.StorageObjectData]) -
     name = obj.name or ""
     is_profile_photo = name.startswith("users/") and "/photos/" in name
     is_community_photo = name.startswith("communities/") and "/photos/" in name
-    if not is_profile_photo and not is_community_photo and not name.startswith("ads/"):
+    is_chat_media = name.startswith("chatMedia/")
+    if not is_profile_photo and not is_community_photo and not is_chat_media and not name.startswith("ads/"):
         return
+    # is_chat_media also covers voice notes uploaded under chatMedia/ — the
+    # content-type guard below skips those (audio/*), only images get resized.
     if not (obj.content_type or "").startswith("image/"):
         return
     if (obj.metadata or {}).get("drokpoOptimized"):
@@ -84,9 +87,16 @@ def optimize_photo(event: storage_fn.CloudEvent[storage_fn.StorageObjectData]) -
 
 
 def _tokens_for(db, uids: list[str]) -> list[str]:
+    # A counterpart is either a person (users/{uid}) or, now that community
+    # accounts swipe/match/chat as themselves, a community (communities/{uid})
+    # — never both, so falling back when the person doc is missing is safe.
     tokens = []
     for uid in uids:
         snap = db.collection("users").document(uid).get()
+        if snap.exists:
+            tokens.extend(snap.to_dict().get("fcmTokens", []))
+            continue
+        snap = db.collection("communities").document(uid).get()
         if snap.exists:
             tokens.extend(snap.to_dict().get("fcmTokens", []))
     return tokens
@@ -152,6 +162,22 @@ def on_swipe_created(event: firestore_fn.Event) -> None:
     )
 
 
+def message_preview(message: dict) -> str:
+    """Human-readable preview for a message doc, for both the lastMessage
+    denormalization and the push body. Senders already write a placeholder
+    into `text` for media messages (so old app builds render a readable
+    bubble instead of an empty one) — this is belt-and-braces for any sender
+    that leaves `text` blank."""
+    text = (message.get("text") or "").strip()
+    if text:
+        return text
+    if message.get("imageUrl"):
+        return "📷 Photo"
+    if message.get("audioUrl"):
+        return "🎤 Voice message"
+    return ""
+
+
 @firestore_fn.on_document_created(document="matches/{matchId}/messages/{messageId}")
 def on_message_created(event: firestore_fn.Event) -> None:
     message = event.data.to_dict() or {}
@@ -166,11 +192,12 @@ def on_message_created(event: firestore_fn.Event) -> None:
 
     sender_id = message.get("senderId")
     recipients = [uid for uid in match_data.get("users", []) if uid != sender_id]
+    preview = message_preview(message)
 
     match_ref.update(
         {
             "lastMessage": {
-                "text": message.get("text", ""),
+                "text": preview,
                 "senderId": sender_id,
                 "createdAt": message.get("createdAt"),
             },
@@ -182,7 +209,7 @@ def on_message_created(event: firestore_fn.Event) -> None:
     _send(
         tokens,
         "New message",
-        message.get("text", "")[:100],
+        preview[:100],
         {"type": "message", "matchId": match_id},
     )
 

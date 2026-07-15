@@ -284,3 +284,99 @@ def test_update_community_accepts_empty_website_via_router(client, monkeypatch):
     response = client.patch("/api/communities/me", json={"website": ""})
     assert response.status_code == 200
     assert captured["payload"].website == ""
+
+
+# ---------------------------------------------------------------------------
+# Open registration: list_directory / get_community_card no longer filter by
+# verification — verification is a badge (memberCount seal), not a gate.
+# ---------------------------------------------------------------------------
+
+
+class _DirDoc:
+    def __init__(self, doc_id, data):
+        self.id = doc_id
+        self._data = data
+
+    def to_dict(self):
+        return self._data
+
+
+class _DirRef:
+    """A doc ref that loops any subcollection back to an empty query — enough
+    for _joined_set's users/{uid}/memberships/{cid} batch-read chain, which
+    these tests want to resolve to "not joined" (empty)."""
+
+    def collection(self, name):
+        return _DirQuery([])
+
+    def get(self):
+        return self
+
+
+class _DirQuery:
+    def __init__(self, docs):
+        self._docs = docs
+
+    def where(self, *args, **kwargs):
+        raise AssertionError("list_directory must not filter by verification")
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+    def limit(self, n):
+        return self
+
+    def stream(self):
+        return iter(self._docs)
+
+    def document(self, doc_id):
+        return _DirRef()
+
+
+class _DirDB:
+    def __init__(self, docs):
+        self._docs = docs
+
+    def collection(self, name):
+        return _DirQuery(self._docs)
+
+    def document(self, doc_id):
+        return _DirRef()
+
+    def get_all(self, refs):
+        return []
+
+
+def test_list_directory_includes_unverified_communities(monkeypatch):
+    from app.services import communities as communities_service
+
+    docs = [
+        _DirDoc("c1", {"name": "Verified Co", "verification": "verified", "memberCount": 5}),
+        _DirDoc("c2", {"name": "Pending Co", "verification": "pending", "memberCount": 1}),
+    ]
+    monkeypatch.setattr(communities_service, "get_firestore", lambda: _DirDB(docs))
+    result = communities_service.list_directory("viewer-uid", limit=50)
+    assert {c["uid"] for c in result} == {"c1", "c2"}
+
+
+def test_get_community_card_returns_unverified_community(monkeypatch):
+    from app.services import communities as communities_service
+
+    monkeypatch.setattr(
+        communities_service,
+        "get_community",
+        lambda cid: {"uid": cid, "name": "Pending Co", "verification": "pending"},
+    )
+    monkeypatch.setattr(communities_service, "_joined_set", lambda db, uid, cids: set())
+    monkeypatch.setattr(communities_service, "get_firestore", lambda: _DirDB([]))
+    card = communities_service.get_community_card("viewer-uid", "c2")
+    assert card is not None
+    assert card["name"] == "Pending Co"
+    assert card["verification"] == "pending"
+
+
+def test_get_community_card_still_404s_for_missing_community(monkeypatch):
+    from app.services import communities as communities_service
+
+    monkeypatch.setattr(communities_service, "get_community", lambda cid: None)
+    assert communities_service.get_community_card("viewer-uid", "gone") is None

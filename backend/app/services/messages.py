@@ -21,7 +21,14 @@ def _require_participant(db, match_id: str, uid: str) -> dict:
     return snap.to_dict()
 
 
-def send_message(match_id: str, uid: str, text: str) -> str:
+def send_message(
+    match_id: str,
+    uid: str,
+    text: str | None,
+    image_url: str | None = None,
+    audio_url: str | None = None,
+    audio_duration_sec: int | None = None,
+) -> str:
     db = get_firestore()
     match = _require_participant(db, match_id, uid)
     if match.get("status") != "active":
@@ -30,7 +37,9 @@ def send_message(match_id: str, uid: str, text: str) -> str:
         {
             "senderId": uid,
             "text": text,
-            "imageUrl": None,
+            "imageUrl": image_url,
+            "audioUrl": audio_url,
+            "audioDurationSec": audio_duration_sec,
             "createdAt": firestore.SERVER_TIMESTAMP,
             "readAt": None,
         }

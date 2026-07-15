@@ -160,6 +160,18 @@ def remove_photo(uid: str, storage_path: str) -> None:
     ref.update({"photos": remaining, "updatedAt": firestore.SERVER_TIMESTAMP})
 
 
+def add_fcm_token(uid: str, token: str) -> None:
+    get_firestore().collection(COMMUNITIES).document(uid).update(
+        {"fcmTokens": firestore.ArrayUnion([token]), "updatedAt": firestore.SERVER_TIMESTAMP}
+    )
+
+
+def remove_fcm_token(uid: str, token: str) -> None:
+    get_firestore().collection(COMMUNITIES).document(uid).update(
+        {"fcmTokens": firestore.ArrayRemove([token]), "updatedAt": firestore.SERVER_TIMESTAMP}
+    )
+
+
 def _membership_refs(db, cid: str, uid: str):
     return (
         db.collection(COMMUNITIES).document(cid).collection(MEMBERS).document(uid),
@@ -216,11 +228,12 @@ def leave_community(cid: str, uid: str) -> None:
 
 
 def list_directory(uid: str, limit: int = 50) -> list[dict]:
-    """Verified communities, biggest first, with `joined` for the caller."""
+    """Every community, biggest first, with `joined` for the caller. Open
+    registration (any community can post/appear from the moment it's
+    created) — `verification` is a badge, not a visibility gate."""
     db = get_firestore()
     query = (
         db.collection(COMMUNITIES)
-        .where("verification", "==", "verified")
         .order_by("memberCount", direction=firestore.Query.DESCENDING)
         .limit(limit)
     )
@@ -230,10 +243,9 @@ def list_directory(uid: str, limit: int = 50) -> list[dict]:
 
 
 def get_community_card(uid: str, cid: str) -> dict | None:
-    """A single verified community's public card, or None if it doesn't exist
-    or isn't verified yet — pending communities aren't publicly visible."""
+    """A single community's public card, or None if it doesn't exist at all."""
     community = get_community(cid)
-    if not community or community.get("verification") != "verified":
+    if not community:
         return None
     joined = cid in _joined_set(get_firestore(), uid, [cid])
     return {**public_summary(cid, community), "joined": joined}

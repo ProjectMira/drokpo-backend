@@ -136,6 +136,44 @@ def test_remove_fcm_token(client, monkeypatch):
     assert captured["t"] == "tok-123"
 
 
+def test_register_fcm_token_writes_to_community_doc(client, monkeypatch):
+    # Community accounts now receive pushes too — the token lands on
+    # communities/{uid}, not users/{uid}, when the caller has no person profile.
+    captured = {}
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
+    monkeypatch.setattr("app.services.communities.community_exists", lambda uid: True)
+
+    def explode(uid, token):
+        raise AssertionError("users.add_fcm_token must not be called for a community")
+
+    monkeypatch.setattr("app.services.users.add_fcm_token", explode)
+    monkeypatch.setattr(
+        "app.services.communities.add_fcm_token", lambda uid, token: captured.update(t=token)
+    )
+    response = client.post("/api/profile/me/fcm-tokens", json={"token": "tok-456"})
+    assert response.status_code == 200
+    assert captured["t"] == "tok-456"
+
+
+def test_remove_fcm_token_from_community_doc(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
+    monkeypatch.setattr("app.services.communities.community_exists", lambda uid: True)
+    monkeypatch.setattr(
+        "app.services.communities.remove_fcm_token", lambda uid, token: captured.update(t=token)
+    )
+    response = client.delete("/api/profile/me/fcm-tokens", params={"token": "tok-456"})
+    assert response.status_code == 200
+    assert captured["t"] == "tok-456"
+
+
+def test_register_fcm_token_rejects_neither_account(client, monkeypatch):
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
+    monkeypatch.setattr("app.services.communities.community_exists", lambda uid: False)
+    response = client.post("/api/profile/me/fcm-tokens", json={"token": "tok-789"})
+    assert response.status_code == 403
+
+
 def test_delete_my_account(client, monkeypatch):
     captured = {}
     monkeypatch.setattr("app.services.users.delete_account", lambda uid: captured.update(uid=uid))

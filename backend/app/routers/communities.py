@@ -81,8 +81,6 @@ def create_my_post(payload: CommunityPostIn, uid: str = Depends(require_communit
         post_id = communityposts_service.create_post(uid, payload)
     except communityposts_service.NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except communityposts_service.NotVerifiedError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"postId": post_id}

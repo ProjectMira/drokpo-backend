@@ -32,16 +32,14 @@ def test_create_post_rejects_non_community_account(client, community_post_payloa
     assert response.status_code == 404
 
 
-def test_create_post_rejects_pending_community(client, community_post_payload, monkeypatch):
+def test_create_post_allows_pending_community(client, community_post_payload, monkeypatch):
+    # Open registration: verification is a badge, not a posting gate — a
+    # brand-new, unreviewed community can publish immediately.
     _as_community(monkeypatch)
-
-    def fail(cid, payload):
-        raise communityposts_service.NotVerifiedError("Posting unlocks once your community is verified")
-
-    monkeypatch.setattr("app.services.communityposts.create_post", fail)
+    monkeypatch.setattr("app.services.communityposts.create_post", lambda cid, payload: "post-1")
     response = client.post("/api/communities/me/posts", json=community_post_payload())
-    assert response.status_code == 403
-    assert "verified" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.json() == {"postId": "post-1"}
 
 
 def test_create_post_invalid_kind_shape_maps_to_400(client, community_post_payload, monkeypatch):
@@ -108,11 +106,22 @@ def test_vote_on_post(client, monkeypatch):
     assert response.json() == result
 
 
-def test_vote_rejects_community_accounts(client, monkeypatch):
-    # vote is gated by require_person_uid now; a community account has no
-    # users/{uid} doc, which is what makes it 403.
+def test_vote_allows_community_accounts(client, monkeypatch):
+    # vote is gated by require_account_uid — community accounts can vote on
+    # Discover content just like persons.
+    result = {"poll": {"options": [], "counts": {"opt1": 1}}, "myVote": "opt1"}
     monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
     monkeypatch.setattr("app.services.communities.community_exists", lambda uid: True)
+    monkeypatch.setattr(
+        "app.services.communityposts.vote", lambda post_id, uid, option_id: result
+    )
+    response = client.post("/api/posts/post-1/vote", json={"optionId": "opt1"})
+    assert response.status_code == 200
+
+
+def test_vote_rejects_neither_account(client, monkeypatch):
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
+    monkeypatch.setattr("app.services.communities.community_exists", lambda uid: False)
     response = client.post("/api/posts/post-1/vote", json={"optionId": "opt1"})
     assert response.status_code == 403
 

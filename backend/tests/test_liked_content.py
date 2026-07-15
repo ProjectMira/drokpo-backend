@@ -28,10 +28,18 @@ def test_unlike_news_idempotent(client, monkeypatch):
     assert client.delete("/api/news/n1/like").status_code == 200
 
 
-def test_like_news_requires_person_account(client, monkeypatch):
-    # A community uid (no person profile) must get 403, not save likes.
+def test_like_news_allows_community_account(client, monkeypatch):
+    # Community accounts can save Discover content (news) just like persons.
+    snapshot = {"newsId": "n1", "title": "Headline", "gist": "G", "sourceUrl": "https://s.example"}
     monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
     monkeypatch.setattr("app.services.communities.community_exists", lambda uid: True)
+    monkeypatch.setattr("app.services.news.like", lambda uid, news_id: snapshot)
+    assert client.put("/api/news/n1/like").status_code == 200
+
+
+def test_like_news_rejects_neither_account(client, monkeypatch):
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
+    monkeypatch.setattr("app.services.communities.community_exists", lambda uid: False)
     assert client.put("/api/news/n1/like").status_code == 403
 
 

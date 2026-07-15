@@ -260,6 +260,21 @@ def get_candidates(uid: str, profile: dict, limit: int = 20) -> list[dict]:
     return _rank_candidates(db, uid, profile, worldwide, None, limit)
 
 
+def get_candidates_for_community(uid: str, limit: int = 20) -> list[dict]:
+    """Candidates for a community account's Discover deck. Communities have no
+    location/preferences/interests to filter or rank by, so this reuses the
+    worldwide pool `get_candidates` falls back to for a person with no nearby
+    matches, keeping the same swiped/blocked exclusions with no age/distance/
+    interest differentiation (an empty profile makes every candidate tie)."""
+    db = get_firestore()
+    pool = {
+        doc.id: doc.to_dict()
+        for doc in db.collection(USERS).where("status", "==", "active").limit(limit * 3).stream()
+        if doc.id != uid
+    }
+    return _rank_candidates(db, uid, {}, pool, None, limit)
+
+
 def _rank_candidates(
     db, uid: str, profile: dict, pool: dict[str, dict], radius_km: float | None, limit: int
 ) -> list[dict]:

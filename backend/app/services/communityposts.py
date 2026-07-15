@@ -31,6 +31,7 @@ PUBLIC_POST_FIELDS = (
     "location",
     "attendeeCount",
     "active",
+    "commentCount",
     "createdAt",
 )
 
@@ -38,10 +39,6 @@ PUBLIC_POST_FIELDS = (
 class NotFoundError(Exception):
     """The community a post is being created for doesn't exist at all — the
     caller's uid isn't a community account."""
-
-
-class NotVerifiedError(Exception):
-    pass
 
 
 class PostNotFoundError(Exception):
@@ -71,8 +68,6 @@ def create_post(cid: str, payload: CommunityPostIn) -> str:
     community = communities_service.get_community(cid)
     if not community:
         raise NotFoundError("Community not found")
-    if community.get("verification") != "verified":
-        raise NotVerifiedError("Posting unlocks once your community is verified")
 
     image_url = payload.imageUrl
     if not image_url and payload.photoStoragePath:
@@ -101,6 +96,7 @@ def create_post(cid: str, payload: CommunityPostIn) -> str:
         "location": None,
         "attendeeCount": None,
         "active": True,
+        "commentCount": 0,
         "impressions": 0,
         "clicks": 0,
         "createdAt": firestore.SERVER_TIMESTAMP,
@@ -342,8 +338,6 @@ def _is_past_event(post: dict) -> bool:
 
 
 def list_active_for_feed(limit: int = 10) -> list[dict]:
-    from app.services import communities as communities_service
-
     if (
         _feed_cache["posts"] is not None
         and _feed_cache["limit"] == limit
@@ -356,17 +350,14 @@ def list_active_for_feed(limit: int = 10) -> list[dict]:
         db.collection(COMMUNITY_POSTS)
         .where("active", "==", True)
         .order_by("createdAt", direction=firestore.Query.DESCENDING)
-        .limit(limit * 3)  # overfetch, then drop posts from not-yet-verified communities/past events
+        .limit(limit * 3)  # overfetch, then drop past events
     )
     posts = [{"postId": doc.id, **doc.to_dict()} for doc in query.stream()]
-
-    community_ids = [p.get("communityId") for p in posts if p.get("communityId")]
-    verified = communities_service.get_verified_uids(community_ids)
 
     result = [
         {"postId": p["postId"], **{k: p[k] for k in PUBLIC_POST_FIELDS if k in p}}
         for p in posts
-        if p.get("communityId") in verified and not _is_past_event(p)
+        if not _is_past_event(p)
     ][:limit]
     _feed_cache.update(expires=time.monotonic() + _CACHE_TTL_SECONDS, limit=limit, posts=result)
     return result

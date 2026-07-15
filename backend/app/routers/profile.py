@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.dependencies import get_current_uid, require_person_uid
+from app.dependencies import get_current_uid, require_account_uid, require_person_uid
 from app.models.user import FcmTokenIn, PhotoConfirm, PhotoOrderIn, ProfileUpdate
 from app.routers.common import attach_photo, require_owned_photo_path
+from app.services import communities as communities_service
 from app.services import storage as storage_service
 from app.services import users as users_service
 
@@ -57,12 +58,20 @@ def delete_photo(storage_path: str, uid: str = Depends(require_person_uid)):
 
 
 @router.post("/me/fcm-tokens")
-def register_fcm_token(payload: FcmTokenIn, uid: str = Depends(require_person_uid)):
-    users_service.add_fcm_token(uid, payload.token)
+def register_fcm_token(payload: FcmTokenIn, uid: str = Depends(require_account_uid)):
+    # Communities now receive pushes too (likes/matches/messages as
+    # themselves), so the token lands on whichever doc actually exists.
+    if users_service.get_profile(uid):
+        users_service.add_fcm_token(uid, payload.token)
+    else:
+        communities_service.add_fcm_token(uid, payload.token)
     return {"ok": True}
 
 
 @router.delete("/me/fcm-tokens")
-def remove_fcm_token(token: str, uid: str = Depends(require_person_uid)):
-    users_service.remove_fcm_token(uid, token)
+def remove_fcm_token(token: str, uid: str = Depends(require_account_uid)):
+    if users_service.get_profile(uid):
+        users_service.remove_fcm_token(uid, token)
+    else:
+        communities_service.remove_fcm_token(uid, token)
     return {"ok": True}

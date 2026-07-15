@@ -47,3 +47,15 @@ async def require_community_uid(uid: str = Depends(get_current_uid)) -> str:
     if not communities_service.community_exists(uid):
         raise HTTPException(status_code=403, detail="This action requires a community account")
     return uid
+
+
+async def require_account_uid(uid: str = Depends(get_current_uid)) -> str:
+    """Person OR community — any fully-created account. Used by surfaces both
+    roles now participate in (swiping, matches, chat, Discover content
+    interactions) where the router itself branches on role as needed."""
+    from app.services import communities as communities_service
+    from app.services import users as users_service
+
+    if users_service.get_profile(uid) is not None or communities_service.community_exists(uid):
+        return uid
+    raise HTTPException(status_code=403, detail="This action requires an account")

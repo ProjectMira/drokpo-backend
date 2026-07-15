@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 
-from app.dependencies import require_person_uid
+from app.dependencies import require_account_uid
 from app.services import communityposts as communityposts_service
 from app.services import news as news_service
 
@@ -8,7 +8,7 @@ router = APIRouter(prefix="/likes", tags=["likes"])
 
 
 @router.get("/content")
-def list_liked_content(uid: str = Depends(require_person_uid), limit: int = Query(default=100, le=200)):
+def list_liked_content(uid: str = Depends(require_account_uid), limit: int = Query(default=100, le=200)):
     """Everything the member saved by liking content cards — news stories and
     community posts — merged newest-first by like time. People they liked stay
     on GET /api/swipes (the Likes tab merges the two client-side)."""

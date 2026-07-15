@@ -237,3 +237,92 @@ def test_get_candidates_falls_back_worldwide_when_radius_is_empty(monkeypatch):
     monkeypatch.setattr(users_service, "_blocked_uids", lambda db, uid: set())
     result = users_service.get_candidates("me", _searcher(radius=50))
     assert [c["uid"] for c in result] == ["far"]
+
+
+# --- community-viewer candidates --------------------------------------------
+
+
+class _CommunityRef:
+    """A doc ref that remembers its own id and loops any subcollection back
+    to the owning stub — just enough chaining for
+    db.collection(USERS).document(uid).collection("swipes").document(cand)."""
+
+    def __init__(self, doc_id, db):
+        self.id = doc_id
+        self._db = db
+
+    def collection(self, name):
+        return self._db
+
+
+class _SwipeSnap:
+    def __init__(self, doc_id, exists):
+        self.id = doc_id
+        self.exists = exists
+
+
+class WorldwideDB:
+    """Firestore stub for get_candidates_for_community: a plain
+    users-where-status-active query (no geohash filtering), plus enough
+    chaining for _rank_candidates' swiped-doc batch read."""
+
+    def __init__(self, docs, swiped=frozenset()):
+        self.docs = docs
+        self.swiped = set(swiped)
+
+    def collection(self, name):
+        return self
+
+    def where(self, *args, **kwargs):
+        return self
+
+    def limit(self, n):
+        return self
+
+    def stream(self):
+        return iter(self.docs)
+
+    def document(self, doc_id):
+        return _CommunityRef(doc_id, self)
+
+    def get_all(self, refs):
+        return [_SwipeSnap(ref.id, ref.id in self.swiped) for ref in refs]
+
+
+def test_get_candidates_for_community_no_age_or_distance_filtering(monkeypatch):
+    # A community's "profile" is empty (no preferences/location/interests),
+    # so nobody gets excluded by age or distance — only swiped/blocked.
+    db = WorldwideDB(
+        [
+            FakeDoc("u1", {"displayName": "Dolma", "dob": "1970-01-01"}),
+            FakeDoc("u2", {"displayName": "Tenzin", "location": {"lat": 40.0, "lng": -74.0}}),
+        ]
+    )
+    monkeypatch.setattr(users_service, "get_firestore", lambda: db)
+    monkeypatch.setattr(users_service, "_blocked_uids", lambda db, uid: set())
+    result = users_service.get_candidates_for_community("c1", limit=20)
+    assert {c["uid"] for c in result} == {"u1", "u2"}
+    assert all("distanceKm" not in c for c in result)
+
+
+def test_get_candidates_for_community_excludes_self(monkeypatch):
+    db = WorldwideDB([FakeDoc("c1", {"displayName": "Self"}), FakeDoc("u2", {"displayName": "Other"})])
+    monkeypatch.setattr(users_service, "get_firestore", lambda: db)
+    monkeypatch.setattr(users_service, "_blocked_uids", lambda db, uid: set())
+    result = users_service.get_candidates_for_community("c1", limit=20)
+    assert [c["uid"] for c in result] == ["u2"]
+
+
+def test_get_candidates_for_community_excludes_swiped_and_blocked(monkeypatch):
+    db = WorldwideDB(
+        [
+            FakeDoc("u1", {"displayName": "Swiped"}),
+            FakeDoc("u2", {"displayName": "Blocked"}),
+            FakeDoc("u3", {"displayName": "Fresh"}),
+        ],
+        swiped={"u1"},
+    )
+    monkeypatch.setattr(users_service, "get_firestore", lambda: db)
+    monkeypatch.setattr(users_service, "_blocked_uids", lambda db, uid: {"u2"})
+    result = users_service.get_candidates_for_community("c1", limit=20)
+    assert [c["uid"] for c in result] == ["u3"]
