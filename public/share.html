@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Drokpo — Make Tibetan friends worldwide</title>
+    <meta property="og:title" content="Drokpo — Make Tibetan friends worldwide" />
+    <meta
+      property="og:description"
+      content="Drokpo means “friend” in Tibetan. Make friends, find your community, and stay rooted wherever in the world you are."
+    />
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: linear-gradient(160deg, #1d5fd1, #b3261e);
+        color: #fff;
+        text-align: center;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      main {
+        max-width: 420px;
+      }
+      h1 {
+        font-size: 2.4rem;
+        margin: 0 0 4px;
+      }
+      .tibetan {
+        font-size: 1.3rem;
+        opacity: 0.9;
+        margin: 0 0 20px;
+      }
+      p {
+        font-size: 1.05rem;
+        line-height: 1.5;
+        opacity: 0.95;
+      }
+      .open-app,
+      .store {
+        display: inline-block;
+        margin-top: 20px;
+        padding: 14px 28px;
+        border-radius: 999px;
+        font-weight: 700;
+        text-decoration: none;
+        font-size: 1.05rem;
+      }
+      .open-app {
+        background: #fff;
+        color: #1d5fd1;
+      }
+      .store {
+        background: rgba(255, 255, 255, 0.18);
+        color: #fff;
+        border: 1px solid rgba(255, 255, 255, 0.6);
+        margin-left: 8px;
+      }
+      .open-app + .store {
+        margin-left: 0;
+      }
+      .buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: center;
+      }
+      .hint {
+        margin-top: 14px;
+        font-size: 0.85rem;
+        opacity: 0.75;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Drokpo</h1>
+      <p class="tibetan">གྲོགས་པོ་ · “friend”</p>
+      <p id="shared-line">
+        The app where Tibetans meet — make friends, find your community, and stay
+        rooted wherever in the world you are.
+      </p>
+      <div class="buttons">
+        <a id="open-app" class="open-app" href="#" hidden>Open in Drokpo</a>
+        <!-- TODO: once the App Store listing URL is known, point this button at
+             https://apps.apple.com/app/idXXXXXXXXXX — no app release needed,
+             the share sheet links here. -->
+        <a class="store" href="https://apps.apple.com/us/search?term=drokpo">Get Drokpo on the App Store</a>
+      </div>
+      <p class="hint">Search “Drokpo” on the App Store on your iPhone.</p>
+    </main>
+    <script>
+      // Shared links land here as /s/{type}/{id} (Hosting rewrite). If the
+      // app is installed, "Open in Drokpo" jumps straight to the shared
+      // content via the drokpo:// scheme; otherwise the store button is the
+      // fallback. No auto-redirect: an uninstalled scheme open shows an iOS
+      // error dialog, so opening stays a deliberate tap.
+      (function () {
+        var match = location.pathname.match(/^\/s\/(user|community|post|news)\/([\w-]+)\/?$/);
+        if (!match) return;
+        var labels = {
+          user: "Someone shared a Drokpo profile with you.",
+          community: "Someone shared a community on Drokpo with you.",
+          post: "Someone shared a community post on Drokpo with you.",
+          news: "Someone shared a news story on Drokpo with you.",
+        };
+        document.getElementById("shared-line").textContent = labels[match[1]];
+        var open = document.getElementById("open-app");
+        open.href = "drokpo://s/" + match[1] + "/" + match[2];
+        open.hidden = false;
+      })();
+    </script>
+  </body>
+</html>

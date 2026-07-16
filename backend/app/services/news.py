@@ -48,6 +48,17 @@ def list_active(limit: int = 20) -> list[dict]:
     return result
 
 
+def get_card(news_id: str) -> dict:
+    """One story by id — resolves shared news links. Served even after the
+    story ages out of the feed (active=False): a link shared last week must
+    outlive the feed rotation."""
+    doc = get_firestore().collection(NEWS).document(news_id).get()
+    if not doc.exists:
+        raise ValueError("News item not found")
+    data = doc.to_dict() or {}
+    return {"newsId": news_id, **{k: data[k] for k in PUBLIC_NEWS_FIELDS if k in data}}
+
+
 def record_event(news_id: str, event: str) -> None:
     if event not in VALID_EVENTS:
         raise ValueError(f"event must be one of {VALID_EVENTS}")
@@ -95,6 +106,15 @@ def unlike(uid: str, news_id: str) -> None:
         db.collection(NEWS).document(news_id).update({"likes": firestore.Increment(-1)})
     except google_exceptions.NotFound:
         pass  # the story itself may have been deleted since; the unlike still stands
+
+
+def liked_ids(uid: str) -> set[str]:
+    """Ids of every story the member has saved — the feed uses this to keep
+    already-liked stories from cycling back into the Discover deck. select([])
+    fetches document names only, so this costs no field reads."""
+    db = get_firestore()
+    query = db.collection(USERS).document(uid).collection(LIKED_NEWS).select([])
+    return {doc.id for doc in query.stream()}
 
 
 def list_liked(uid: str, limit: int = 100) -> list[dict]:

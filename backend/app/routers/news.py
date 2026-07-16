@@ -13,6 +13,15 @@ class NewsEventIn(BaseModel):
     event: Literal["impression", "click"]
 
 
+@router.get("/{news_id}")
+def get_news_card(news_id: str, uid: str = Depends(require_account_uid)):
+    """One story by id — resolves shared news links (drokpo.../s/news/{id})."""
+    try:
+        return news_service.get_card(news_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.post("/{news_id}/events")
 def record_news_event(news_id: str, payload: NewsEventIn, uid: str = Depends(get_current_uid)):
     try:

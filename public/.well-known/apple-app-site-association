@@ -1,0 +1,16 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appIDs": ["W66Z24ZPWQ.app.drokpo.ios"],
+        "components": [
+          {
+            "/": "/s/*",
+            "comment": "Shared content links open in the app once the Associated Domains entitlement ships"
+          }
+        ]
+      }
+    ]
+  }
+}

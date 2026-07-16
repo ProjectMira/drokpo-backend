@@ -9,6 +9,12 @@ def no_content_cards(monkeypatch):
     monkeypatch.setattr("app.services.ads.list_active", lambda: [])
     monkeypatch.setattr("app.services.news.list_active", lambda: [])
     monkeypatch.setattr("app.services.communityposts.list_active_for_feed", lambda: [])
+    # The route drops content the viewer already liked; default to none liked.
+    monkeypatch.setattr("app.services.news.liked_ids", lambda uid: set())
+    monkeypatch.setattr("app.services.communityposts.liked_ids", lambda uid: set())
+    # ...and posts from blocked communities; default to nobody blocked.
+    monkeypatch.setattr("app.routers.feed.get_firestore", lambda: None)
+    monkeypatch.setattr("app.services.users._blocked_uids", lambda db, uid: set())
 
 
 def test_feed_requires_an_account(client, monkeypatch):
@@ -64,6 +70,50 @@ def test_feed_includes_active_community_posts(client, monkeypatch):
     response = client.get("/api/feed")
     assert response.status_code == 200
     assert response.json() == {"candidates": [], "ads": [], "news": [], "communityPosts": posts}
+
+
+def test_feed_excludes_already_liked_news(client, monkeypatch):
+    # A saved story lives in the Likes tab; the deck must not cycle it back.
+    news = [
+        {"newsId": "n1", "title": "Saved", "gist": "G", "sourceUrl": "https://s.example"},
+        {"newsId": "n2", "title": "Fresh", "gist": "G", "sourceUrl": "https://s.example"},
+    ]
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: {"onboardingComplete": True})
+    monkeypatch.setattr("app.services.users.get_candidates", lambda uid, prof, limit: [])
+    monkeypatch.setattr("app.services.news.list_active", lambda: news)
+    monkeypatch.setattr("app.services.news.liked_ids", lambda uid: {"n1"})
+    body = client.get("/api/feed").json()
+    assert [n["newsId"] for n in body["news"]] == ["n2"]
+    # The shared cache list itself must be untouched.
+    assert [n["newsId"] for n in news] == ["n1", "n2"]
+
+
+def test_feed_excludes_already_liked_posts(client, monkeypatch):
+    posts = [
+        {"postId": "p1", "kind": "announcement", "title": "Saved"},
+        {"postId": "p2", "kind": "announcement", "title": "Fresh"},
+    ]
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: {"onboardingComplete": True})
+    monkeypatch.setattr("app.services.users.get_candidates", lambda uid, prof, limit: [])
+    monkeypatch.setattr("app.services.communityposts.list_active_for_feed", lambda: posts)
+    monkeypatch.setattr("app.services.communityposts.liked_ids", lambda uid: {"p1"})
+    body = client.get("/api/feed").json()
+    assert [p["postId"] for p in body["communityPosts"]] == ["p2"]
+    assert [p["postId"] for p in posts] == ["p1", "p2"]
+
+
+def test_feed_excludes_posts_from_blocked_communities(client, monkeypatch):
+    posts = [
+        {"postId": "p1", "kind": "announcement", "communityId": "blocked-cid"},
+        {"postId": "p2", "kind": "announcement", "communityId": "friendly-cid"},
+    ]
+    monkeypatch.setattr("app.services.users.get_profile", lambda uid: {"onboardingComplete": True})
+    monkeypatch.setattr("app.services.users.get_candidates", lambda uid, prof, limit: [])
+    monkeypatch.setattr("app.services.communityposts.list_active_for_feed", lambda: posts)
+    monkeypatch.setattr("app.services.users._blocked_uids", lambda db, uid: {"blocked-cid"})
+    body = client.get("/api/feed").json()
+    assert [p["postId"] for p in body["communityPosts"]] == ["p2"]
+    assert [p["postId"] for p in posts] == ["p1", "p2"]
 
 
 def test_feed_community_posts_carry_viewer_vote_and_rsvp(client, monkeypatch):

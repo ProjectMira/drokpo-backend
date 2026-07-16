@@ -15,6 +15,15 @@ class PostEventIn(BaseModel):
     event: Literal["impression", "click"]
 
 
+@router.get("/{post_id}")
+def get_post(post_id: str, uid: str = Depends(require_account_uid)):
+    """One post by id — resolves shared post links (drokpo.../s/post/{id})."""
+    try:
+        return communityposts_service.get_post(post_id, uid)
+    except communityposts_service.PostNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.post("/{post_id}/vote")
 def vote_on_post(post_id: str, payload: VoteIn, uid: str = Depends(require_account_uid)):
     try:

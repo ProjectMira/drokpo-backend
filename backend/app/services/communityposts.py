@@ -193,6 +193,20 @@ def list_posts(cid: str, uid: str, limit: int = 20, before: str | None = None) -
     return _to_public_posts(db, uid, posts)
 
 
+def get_post(post_id: str, uid: str) -> dict:
+    """One post by id, shaped like a list_posts row (myVote/myRsvp attached) —
+    resolves shared post links. Unpublished posts 404 for everyone except the
+    owning community, matching list_posts' visibility."""
+    db = get_firestore()
+    snap = db.collection(COMMUNITY_POSTS).document(post_id).get()
+    if not snap.exists:
+        raise PostNotFoundError("Post not found")
+    data = snap.to_dict() or {}
+    if not data.get("active") and data.get("communityId") != uid:
+        raise PostNotFoundError("Post not found")
+    return _to_public_posts(db, uid, [{"postId": post_id, **data}])[0]
+
+
 def list_feed_for_member(uid: str, limit: int = 30) -> list[dict]:
     """Posts from every community `uid` has joined, newest first — the
     person-side Communities tab's "from your communities" section."""
@@ -402,6 +416,15 @@ def unlike(uid: str, post_id: str) -> None:
         db.collection(COMMUNITY_POSTS).document(post_id).update({"likes": firestore.Increment(-1)})
     except google_exceptions.NotFound:
         pass  # the post itself may have been deleted since; the unlike still stands
+
+
+def liked_ids(uid: str) -> set[str]:
+    """Ids of every post the member has saved — the feed uses this to keep
+    already-liked posts from cycling back into the Discover deck. select([])
+    fetches document names only, so this costs no field reads."""
+    db = get_firestore()
+    query = db.collection(USERS).document(uid).collection(LIKED_POSTS).select([])
+    return {doc.id for doc in query.stream()}
 
 
 def list_liked(uid: str, limit: int = 100) -> list[dict]:

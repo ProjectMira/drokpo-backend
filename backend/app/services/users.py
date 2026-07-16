@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from firebase_admin import auth as firebase_auth
 from firebase_admin import firestore
@@ -10,6 +10,10 @@ from app.services import geo
 
 USERS = "users"
 MAX_PHOTOS = 6
+# A left-swipe means "not right now", not "never again": after this many days
+# a passed profile may reappear in Discover. Likes/superlikes stay excluded
+# forever — a liked person lives in the Likes tab until matched or undone.
+PASS_COOLDOWN_DAYS = 7
 
 # Fields safe to show to other members (no location, preferences, or fcmTokens).
 PUBLIC_FIELDS = (
@@ -205,6 +209,28 @@ def _within_age(dob: str | None, age_min: int | None, age_max: int | None) -> bo
     return (age_min or 0) <= age <= (age_max if age_max is not None else 200)
 
 
+def _swiped_out_uids(swipe_snaps) -> set[str]:
+    """Uids still hidden by a recorded swipe: every like/superlike, plus
+    passes younger than PASS_COOLDOWN_DAYS. An expired pass stops hiding the
+    candidate — re-swiping simply overwrites the old swipe doc. A pass with a
+    missing/unparseable createdAt stays hidden (conservative)."""
+    now = datetime.now(timezone.utc)
+    excluded = set()
+    for snap in swipe_snaps:
+        if not snap.exists:
+            continue
+        data = snap.to_dict() or {}
+        created = data.get("createdAt")
+        if (
+            data.get("action") == "pass"
+            and isinstance(created, datetime)
+            and now - created >= timedelta(days=PASS_COOLDOWN_DAYS)
+        ):
+            continue
+        excluded.add(snap.id)
+    return excluded
+
+
 def _blocked_uids(db, uid: str) -> set[str]:
     block_doc = db.collection("blocks").document(uid)
     blocked = {d.id for d in block_doc.collection("blockedUsers").stream()}
@@ -287,7 +313,7 @@ def _rank_candidates(
     # streaming the caller's entire (unbounded) swipe history.
     swipes = db.collection(USERS).document(uid).collection("swipes")
     swipe_refs = [swipes.document(cand_uid) for cand_uid in pool]
-    swiped_ids = {s.id for s in db.get_all(swipe_refs) if s.exists}
+    swiped_ids = _swiped_out_uids(db.get_all(swipe_refs))
 
     excluded = _blocked_uids(db, uid)
     prefs = profile.get("preferences", {})

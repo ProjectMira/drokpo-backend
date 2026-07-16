@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.dependencies import require_account_uid
+from app.firebase import get_firestore
 from app.services import ads as ads_service
 from app.services import communities as communities_service
 from app.services import communityposts as communityposts_service
@@ -31,12 +32,19 @@ def get_feed(
         candidates = users_service.get_candidates_for_community(uid, limit) if is_verified else []
 
     ads = ads_service.list_active()
-    news = news_service.list_active()
+    # Already-liked content never cycles back into the deck — a saved story or
+    # post lives in the Likes tab; re-serving it reads as a broken feed.
+    liked_news = news_service.liked_ids(uid)
+    news = [n for n in news_service.list_active() if n["newsId"] not in liked_news]
+    liked_posts = communityposts_service.liked_ids(uid)
+    posts = [p for p in communityposts_service.list_active_for_feed() if p["postId"] not in liked_posts]
+    # Blocking a community hides its posts too, not just its account card.
+    blocked = users_service._blocked_uids(get_firestore(), uid)
+    if blocked:
+        posts = [p for p in posts if p.get("communityId") not in blocked]
     # The cached posts are viewer-agnostic; overlay this caller's poll
     # votes and event RSVPs so the deck doesn't forget them.
-    posts = communityposts_service.attach_viewer_state(
-        uid, communityposts_service.list_active_for_feed()
-    )
+    posts = communityposts_service.attach_viewer_state(uid, posts)
     if profile is None:
         # A community never sees its own posts in its own Discover feed.
         # Filter the (already-copied, per-viewer) list — never the shared cache.

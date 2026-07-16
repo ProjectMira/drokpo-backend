@@ -15,6 +15,7 @@ from app.routers import (
     profile,
     reports,
     swipes,
+    users,
 )
 
 app = FastAPI(title="Drokpo API")
@@ -51,6 +52,7 @@ api.include_router(reports.router)
 api.include_router(ads.router)
 api.include_router(news.router)
 api.include_router(likes.router)
+api.include_router(users.router)
 app.include_router(api)
 
 

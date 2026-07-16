@@ -256,9 +256,13 @@ class _CommunityRef:
 
 
 class _SwipeSnap:
-    def __init__(self, doc_id, exists):
+    def __init__(self, doc_id, exists, data=None):
         self.id = doc_id
         self.exists = exists
+        self._data = data if data is not None else {"action": "like"}
+
+    def to_dict(self):
+        return self._data
 
 
 class WorldwideDB:
@@ -311,6 +315,48 @@ def test_get_candidates_for_community_excludes_self(monkeypatch):
     monkeypatch.setattr(users_service, "_blocked_uids", lambda db, uid: set())
     result = users_service.get_candidates_for_community("c1", limit=20)
     assert [c["uid"] for c in result] == ["u2"]
+
+
+# --- pass cooldown ------------------------------------------------------------
+
+from datetime import datetime, timedelta, timezone
+
+
+def _swipe(uid, action, days_ago=0):
+    return _SwipeSnap(
+        uid, True, {"action": action, "createdAt": datetime.now(timezone.utc) - timedelta(days=days_ago)}
+    )
+
+
+def test_swiped_out_uids_likes_hide_forever_passes_expire():
+    snaps = [
+        _swipe("liked-old", "like", days_ago=400),
+        _swipe("superliked-old", "superlike", days_ago=400),
+        _swipe("passed-recently", "pass", days_ago=2),
+        _swipe("passed-long-ago", "pass", days_ago=users_service.PASS_COOLDOWN_DAYS),
+        _SwipeSnap("never-swiped", False),
+    ]
+    excluded = users_service._swiped_out_uids(snaps)
+    # An expired pass no longer hides the candidate; everything else does.
+    assert excluded == {"liked-old", "superliked-old", "passed-recently"}
+
+
+def test_swiped_out_uids_pass_with_missing_created_at_stays_hidden():
+    # Conservative: a malformed swipe doc must not resurface someone early.
+    snaps = [_SwipeSnap("no-timestamp", True, {"action": "pass"})]
+    assert users_service._swiped_out_uids(snaps) == {"no-timestamp"}
+
+
+def test_rank_candidates_lets_expired_passes_reappear(monkeypatch):
+    monkeypatch.setattr(users_service, "_blocked_uids", lambda db, uid: set())
+
+    class CooldownDB(WorldwideDB):
+        def get_all(self, refs):
+            return [_swipe(ref.id, "pass", days_ago=users_service.PASS_COOLDOWN_DAYS + 1) for ref in refs]
+
+    pool = {"passed-ages-ago": _candidate(28.75, 77.25)}
+    result = users_service._rank_candidates(CooldownDB([]), "me", _searcher(), pool, 50, 20)
+    assert [c["uid"] for c in result] == ["passed-ages-ago"]
 
 
 def test_get_candidates_for_community_excludes_swiped_and_blocked(monkeypatch):
