@@ -159,34 +159,16 @@ def complete_onboarding(uid: str) -> None:
 
 
 def delete_account(uid: str) -> None:
-    """Remove the user's data and Firebase Auth account.
-
-    Matches are flipped to "unmatched" (not deleted) so the other participant's
-    chat history — and any evidence attached to reports — survives, same as a
-    normal unmatch.
+    """Remove everything the person left in Firestore and Storage, then their
+    Firebase Auth account. See account_deletion for what that covers. In
+    short: their own docs and files are deleted, along with their
+    contributions elsewhere (memberships, votes, RSVPs, comments, sent
+    messages, swipes, blocks). Matches are flipped to "unmatched" rather than
+    deleted, so the other person's side of each chat survives.
     """
-    from app.services import storage as storage_service
+    from app.services import account_deletion
 
-    db = get_firestore()
-    ref = db.collection(USERS).document(uid)
-    snap = ref.get()
-    profile = snap.to_dict() if snap.exists else {}
-
-    for photo in profile.get("photos", []):
-        path = photo.get("storagePath")
-        if path:
-            storage_service.delete_blob(path)
-
-    for match in db.collection("matches").where("users", "array_contains", uid).stream():
-        if match.to_dict().get("status") == "active":
-            match.reference.update({"status": "unmatched"})
-
-    for swipe in ref.collection("swipes").stream():
-        swipe.reference.delete()
-    for blocked in db.collection("blocks").document(uid).collection("blockedUsers").stream():
-        blocked.reference.delete()
-
-    ref.delete()
+    account_deletion.delete_person(uid)
 
     ensure_app()
     try:

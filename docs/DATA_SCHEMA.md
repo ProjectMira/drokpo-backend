@@ -95,6 +95,7 @@ Created only when both sides have liked each other, inside a Firestore transacti
 | `createdAt` | Timestamp | backend | |
 | `lastMessage` | map `{ text, senderId, createdAt }` or `null` | Cloud Function (`on_message_created`) | Denormalized copy of the newest message, kept in sync as messages arrive — lets the match-list screen render previews without reading every thread |
 | `unreadCount` | map `{ [uid]: number }` | Cloud Function (`on_message_created`) increments; `POST /matches/{matchId}/read` resets the caller's counter to 0 | |
+| `evidenceHold` | map `{ uid, since }`, absent normally | backend, during account deletion | Set when `uid` deleted their account while the other participant had an open report against them. `uid`'s messages and chat media in this match were kept as evidence instead of deleted; a moderator purges them by hand once the report is reviewed. See [Account deletion](#account-deletion) |
 
 **Access rule:** clients can `read` a match only if their uid is in its `users` array; `write` is `false` — only the backend creates/updates it.
 
@@ -110,7 +111,7 @@ Messages can be written two ways — **directly by clients** under rule enforcem
 | `createdAt` | Timestamp | No | Convention is a client-set `serverTimestamp()`, but rules don't enforce its type or presence |
 | `readAt` | Timestamp \| null | No | Reserved field; nothing writes it yet (see Known Gaps) |
 
-**Access rule:** `read` requires the caller's uid to be in the parent match's `users` array (checked via `get()` on the parent doc); `create` additionally requires the parent match's `status` to be `"active"`, so messaging stops the moment either side unmatches (history stays readable). `update`/`delete` are `false` — messages are immutable once created.
+**Access rule:** `read` requires the caller's uid to be in the parent match's `users` array (checked via `get()` on the parent doc); `create` additionally requires the parent match's `status` to be `"active"`, so messaging stops the moment either side unmatches (history stays readable). `update`/`delete` are `false` — messages are immutable once created. The only deleter is the backend, when the sender deletes their account (see [Account deletion](#account-deletion)).
 
 **Worked example.** Two users match, then exchange three messages:
 
@@ -254,13 +255,13 @@ A community's post, in one of four kinds. Top-level rather than a subcollection 
 
 ### `communityPosts/{postId}/votes/{uid}`
 
-One doc per voter. `{optionId, createdAt, updatedAt}`. Written inside a Firestore transaction ([communityposts.py](../backend/app/services/communityposts.py) `_vote_transaction`) that also updates the parent post's `poll.counts` — reads both the post and the caller's existing vote before any write (Firestore's read-before-write rule), so a changed vote atomically moves the count from the old option to the new one. Re-voting for the same option is a no-op (no write at all).
+One doc per voter. `{uid, optionId, createdAt, updatedAt}`. `uid` repeats the doc ID because a collection-group query can't filter on a bare doc ID; account deletion finds every vote a member cast with `collection_group("votes").where("uid", "==", …)`. Comment votes (`communityPosts/{postId}/comments/{commentId}/votes/{uid}`, `{uid, value, createdAt, updatedAt}`) share the `votes` group name and the same field. Docs written before `uid` existed are stamped by `python -m scripts.backfill_vote_uids`. Written inside a Firestore transaction ([communityposts.py](../backend/app/services/communityposts.py) `_vote_transaction`) that also updates the parent post's `poll.counts` — reads both the post and the caller's existing vote before any write (Firestore's read-before-write rule), so a changed vote atomically moves the count from the old option to the new one. Re-voting for the same option is a no-op (no write at all).
 
 **Access rule:** no client access.
 
 ### `communityPosts/{postId}/rsvps/{uid}`
 
-One doc per attendee, `{createdAt}`. Same transactional shape as `votes` (`_rsvp_transaction` in [communityposts.py](../backend/app/services/communityposts.py)): reads the post and the caller's existing RSVP before any write, then sets or deletes the marker and moves `attendeeCount` by exactly one. RSVPing when already going, or un-RSVPing when not, is a no-op. `POST /api/posts/{postId}/rsvp` (going) and `DELETE /api/posts/{postId}/rsvp` (not going) — persons only.
+One doc per attendee, `{uid, createdAt}` (`uid` for the same reason as on `votes`). Same transactional shape as `votes` (`_rsvp_transaction` in [communityposts.py](../backend/app/services/communityposts.py)): reads the post and the caller's existing RSVP before any write, then sets or deletes the marker and moves `attendeeCount` by exactly one. RSVPing when already going, or un-RSVPing when not, is a no-op. `POST /api/posts/{postId}/rsvp` (going) and `DELETE /api/posts/{postId}/rsvp` (not going) — persons only.
 
 **Access rule:** no client access.
 
@@ -316,7 +317,31 @@ Firestore requires an explicit composite index whenever a query combines an equa
 | `communityPosts` | `communityId` (==) + `createdAt` (desc) | Same endpoint when the community views its own posts (includes unpublished ones, so no `active` filter) |
 | `communityPosts` | `active` (==) + `createdAt` (desc) | The Discover feed's community-post query in `list_active_for_feed` |
 
+Single-field **collection-group** indexes are not automatic, so `fieldOverrides` in the same file enables them for the collection-group equality queries: `swipes.toUid` (`GET /swipes/received`, account deletion), and `comments.authorUid`, `votes.uid`, `rsvps.uid` (account deletion only).
+
 `news` needs no composite index — `list_active` filters `active == true` in the query and sorts by `order` in memory (same as `ads.list_active`), since the active set is small (capped at ~40 by the skill's prune step).
+
+---
+
+## Account deletion
+
+`DELETE /api/profile/me` and `DELETE /api/communities/me` run the cascade in [account_deletion.py](../backend/app/services/account_deletion.py), then delete the Firebase Auth user. Firestore doesn't cascade deletes, so every doc an account touched is found explicitly and removed in batched writes (≤400 per batch). A delete and the counter it moves always share a batch:
+
+| What | How it's found | What happens |
+|---|---|---|
+| The account's own doc and subcollections: `users/{uid}` (swipes, likedNews, likedPosts, memberships) or `communities/{cid}` (members) | the doc's subcollections, then an all-descendants query each | deleted. A community's swipes/likes live under `users/{cid}` too and are deleted the same way |
+| Community memberships | the person's `memberships/*` mirror | `members/{uid}` deleted and `memberCount` decremented; for a community, each member's `memberships/{cid}` deleted |
+| A community's posts | `communityPosts` where `communityId == cid` | each post deleted with its comments, comment votes, poll votes and RSVPs |
+| Poll votes, comment votes, RSVPs cast | collection group `votes` / `rsvps` where `uid == uid` | deleted; `poll.counts`, `likeCount`/`dislikeCount`, `attendeeCount` decremented |
+| Comments written | collection group `comments` where `authorUid == uid` | replies deleted; a top-level comment is deleted unless other people's replies hang off it. In that case it becomes a tombstone (author fields and audio cleared, `authorName: "Deleted account"`, `deleted: true`) so the replies survive. `commentCount`/`replyCount` follow |
+| Swipes received | collection group `swipes` where `toUid == uid` | deleted |
+| Blocks | own `blockedUsers`/`blockedBy` lists | both sides of each mirrored pair deleted |
+| Matches and messages | `matches` where `users` contains uid; collection group `messages` where `senderId == uid` | matches flip to `"unmatched"` (never deleted, so the other person's messages survive). The account's sent messages are deleted, and `lastMessage` is cleared when it was theirs. **Evidence hold:** in a match whose other participant has an `open` report against the account, its messages and their media are kept and the match gets `evidenceHold` |
+| Storage | per-uid folders | `users/{uid}/` or `communities/{cid}/`, `commentAudio/{uid}/`, and `chatMedia/{uid}/` (except files referenced by held messages) |
+
+Kept on purpose: `reports` (both directions — safety records), the other person's side of every chat, other members' `likedPosts` snapshots of a deleted community's posts (a saved copy is the liker's, same as when a post is unpublished), and the aggregate `likes`/`impressions`/`clicks` analytics counters on news and posts.
+
+The account's own doc is deleted last, after every other step has succeeded. That doc is what the role check in [dependencies.py](../backend/app/dependencies.py) looks for, so a deletion that fails partway returns 500 and the app can retry it. Every step is idempotent.
 
 ---
 

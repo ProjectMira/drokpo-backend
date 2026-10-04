@@ -77,7 +77,7 @@ Four things this guarantees without any server involvement:
 
 - **You can't read or write into a chat you're not part of.** Every read/create checks membership in the parent match's `users` array via `get()`, so even if a client knew a `matchId`, it can't fetch messages for someone else's conversation.
 - **You can't impersonate the other person.** `senderId` in the message being created must equal the caller's own authenticated uid — a client can send a message *as* itself, never *as* the other party.
-- **Messages are immutable once sent.** `allow update, delete: if false` — no editing or deleting after the fact. If "delete for me" or "edit message" becomes a requirement later, that needs a deliberate rule change (e.g. a soft-delete flag scoped per-user rather than a real delete).
+- **Messages are immutable once sent.** `allow update, delete: if false` — no editing or deleting after the fact. If "delete for me" or "edit message" becomes a requirement later, that needs a deliberate rule change (e.g. a soft-delete flag scoped per-user rather than a real delete). The one exception is server-side: when an account is deleted, the backend deletes the messages it sent, unless the other participant has an open report against it (see [Account deletion](DATA_SCHEMA.md#account-deletion)).
 - **Messaging stops when the match ends.** The create rule re-reads the parent match's `status` and only allows writes while it's `"active"`, so an unmatch takes effect immediately at the rules layer — the other party can't keep sending through the client SDK.
 
 ## Client responsibilities (not yet built — this repo is backend-only)

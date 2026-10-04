@@ -429,3 +429,97 @@ def test_list_active_for_feed_is_cached(monkeypatch):
 
     assert first == second
     assert calls["count"] == 1
+
+
+# --- _vote_transaction() — poll count math, stubbed Firestore ----------------
+# Same approach as test_events_rsvp.py: call the undecorated function
+# (`.to_wrap`) with a recording transaction.
+
+
+class StubVoteSnap:
+    def __init__(self, data, exists=True):
+        self._data = data
+        self.exists = exists
+
+    def to_dict(self):
+        return self._data
+
+    def get(self, field):
+        return self._data.get(field)
+
+
+class StubVoteRef:
+    def __init__(self, snap):
+        self._snap = snap
+
+    def get(self, transaction=None):
+        return self._snap
+
+
+class StubPollPostRef:
+    def __init__(self, post_snap, vote_ref):
+        self._post_snap = post_snap
+        self._vote_ref = vote_ref
+
+    def get(self, transaction=None):
+        return self._post_snap
+
+    def collection(self, name):
+        return self
+
+    def document(self, uid):
+        return self._vote_ref
+
+
+class StubPollDB:
+    def __init__(self, post_ref):
+        self._post_ref = post_ref
+
+    def collection(self, name):
+        return self
+
+    def document(self, post_id):
+        return self._post_ref
+
+
+class RecordingTransaction:
+    def __init__(self):
+        self.sets = []
+        self.updates = []
+
+    def set(self, ref, data):
+        self.sets.append((ref, data))
+
+    def update(self, ref, data):
+        self.updates.append((ref, data))
+
+
+def _run_poll_vote(counts, previous_option, option_id):
+    post = {
+        "kind": "poll",
+        "active": True,
+        "poll": {"options": [{"id": "opt1"}, {"id": "opt2"}], "counts": counts},
+    }
+    vote = {"optionId": previous_option, "createdAt": "earlier"} if previous_option else {}
+    vote_ref = StubVoteRef(StubVoteSnap(vote, exists=previous_option is not None))
+    db = StubPollDB(StubPollPostRef(StubVoteSnap(post), vote_ref))
+    transaction = RecordingTransaction()
+    raw = communityposts_service._vote_transaction.to_wrap
+    poll = raw(transaction, db, "post-1", "voter-uid", option_id)
+    return poll, transaction
+
+
+def test_poll_vote_stamps_voter_uid():
+    poll, txn = _run_poll_vote({"opt1": 1, "opt2": 0}, previous_option=None, option_id="opt2")
+    assert poll["counts"] == {"opt1": 1, "opt2": 1}
+    (_, data), = txn.sets
+    # Denormalized so account deletion can find it by collection-group query.
+    assert data["uid"] == "voter-uid"
+    assert data["optionId"] == "opt2"
+
+
+def test_poll_vote_change_moves_count_between_options():
+    poll, txn = _run_poll_vote({"opt1": 1, "opt2": 0}, previous_option="opt1", option_id="opt2")
+    assert poll["counts"] == {"opt1": 0, "opt2": 1}
+    assert txn.updates[0][1] == {"poll.counts": {"opt1": 0, "opt2": 1}}
+    assert txn.sets[0][1]["createdAt"] == "earlier"

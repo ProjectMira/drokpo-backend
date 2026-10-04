@@ -790,6 +790,8 @@ def test_vote_none_to_like():
     result, txn = _run_vote({"likeCount": 0, "dislikeCount": 0}, existing_vote=None, value="like")
     assert result == {"likeCount": 1, "dislikeCount": 0, "myVote": "like"}
     assert len(txn.sets) == 1
+    # Denormalized so account deletion can find it by collection-group query.
+    assert txn.sets[0][1]["uid"] == TEST_UID
     assert txn.updates == [(txn.updates[0][0], {"likeCount": 1, "dislikeCount": 0})]
 
 

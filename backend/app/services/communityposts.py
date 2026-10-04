@@ -7,6 +7,10 @@ from app.firebase import get_firestore
 from app.models.community_post import CommunityPostIn, CommunityPostUpdate
 
 COMMUNITY_POSTS = "communityPosts"
+# Vote and RSVP docs are keyed by the voter's uid and also carry it as a
+# `uid` field. A collection-group query can't filter on a bare doc id (it needs
+# the full path), so the field is what lets account deletion find every vote
+# a member cast with one query.
 VOTES = "votes"
 RSVPS = "rsvps"
 # Firestore "in" filters accept at most 30 values per query.
@@ -264,6 +268,7 @@ def _vote_transaction(transaction, db, post_id: str, uid: str, option_id: str) -
     transaction.set(
         vote_ref,
         {
+            "uid": uid,
             "optionId": option_id,
             "createdAt": vote_snap.get("createdAt") if vote_snap.exists else firestore.SERVER_TIMESTAMP,
             "updatedAt": firestore.SERVER_TIMESTAMP,
@@ -301,7 +306,7 @@ def _rsvp_transaction(transaction, db, post_id: str, uid: str, going: bool) -> i
         return count  # no-op: RSVPing when already going, or un-RSVPing when not
 
     if going:
-        transaction.set(rsvp_ref, {"createdAt": firestore.SERVER_TIMESTAMP})
+        transaction.set(rsvp_ref, {"uid": uid, "createdAt": firestore.SERVER_TIMESTAMP})
         count += 1
     else:
         transaction.delete(rsvp_ref)

@@ -323,27 +323,15 @@ def list_members(cid: str, limit: int = 50) -> list[dict]:
 
 
 def delete_community(uid: str) -> None:
-    """Remove the community's data and Firebase Auth account.
-
-    Membership marker docs (communities/{uid}/members/*, and each member's
-    users/{memberUid}/memberships/{uid}) and the community's posts are left
-    for a background cleanup — deleting them synchronously here could be an
-    unbounded fan-out for a large community. This mirrors how ads/photos are
-    handled elsewhere: correctness now, cleanup can be a follow-up job.
+    """Remove the community's posts (with their comments, votes and RSVPs),
+    its member list and each member's mirror membership, its photos, and
+    everything it left by taking part in matching and chat, as
+    account_deletion.delete_community describes. Then remove the Firebase
+    Auth account.
     """
-    from app.services import storage as storage_service
+    from app.services import account_deletion
 
-    db = get_firestore()
-    ref = db.collection(COMMUNITIES).document(uid)
-    snap = ref.get()
-    community = snap.to_dict() if snap.exists else {}
-
-    for photo in community.get("photos", []):
-        path = photo.get("storagePath")
-        if path:
-            storage_service.delete_blob(path)
-
-    ref.delete()
+    account_deletion.delete_community(uid)
 
     ensure_app()
     try:
