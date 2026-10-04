@@ -1,5 +1,7 @@
 import uuid
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlparse
+
+from google.api_core import exceptions as google_exceptions
 
 from app.firebase import get_bucket
 
@@ -23,6 +25,37 @@ def delete_blob(storage_path: str) -> None:
     blob = get_bucket().blob(storage_path)
     if blob.exists():
         blob.delete()
+
+
+def delete_prefix(prefix: str, keep: set[str] | frozenset[str] = frozenset()) -> None:
+    """Delete every blob under a folder prefix except the paths in `keep`.
+
+    Account deletion sweeps whole per-uid folders this way, so files no doc
+    references any more (a photo removed from the profile, an abandoned chat
+    upload) go too. The prefix must end in "/": "users/abc" would also match
+    another account's "users/abcd/...".
+    """
+    if not prefix.endswith("/"):
+        raise ValueError("prefix must end with '/'")
+    for blob in get_bucket().list_blobs(prefix=prefix):
+        if blob.name in keep:
+            continue
+        try:
+            blob.delete()
+        except google_exceptions.NotFound:
+            pass  # already gone — the goal state holds
+
+
+def path_from_download_url(url: str | None) -> str | None:
+    """The storagePath a Firebase token download URL points at — the inverse
+    of ensure_download_url, and the same URL shape the client SDK's
+    getDownloadURL() returns. None for any other URL."""
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.netloc != "firebasestorage.googleapis.com" or "/o/" not in parsed.path:
+        return None
+    return unquote(parsed.path.split("/o/", 1)[1])
 
 
 def ensure_download_url(storage_path: str) -> str | None:

@@ -96,6 +96,8 @@ def test_rsvp_new_attendee_increments_count():
     count, txn = _run_rsvp({"kind": "event", "active": True, "attendeeCount": 2}, rsvp_exists=False, going=True)
     assert count == 3
     assert len(txn.sets) == 1
+    # Denormalized so account deletion can find it by collection-group query.
+    assert txn.sets[0][1]["uid"] == TEST_UID
     assert txn.updates == [(txn.updates[0][0], {"attendeeCount": 3})]
 
 

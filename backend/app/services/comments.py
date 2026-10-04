@@ -28,6 +28,7 @@ PUBLIC_COMMENT_FIELDS = (
     "likeCount",
     "dislikeCount",
     "createdAt",
+    "deleted",  # only on an account-deletion tombstone (account_deletion.COMMENT_TOMBSTONE)
 )
 
 
@@ -254,6 +255,9 @@ def _vote_comment_transaction(transaction, db, post_id: str, comment_id: str, ui
         transaction.set(
             vote_ref,
             {
+                # Denormalized for account deletion, as on poll votes
+                # (communityposts.VOTES).
+                "uid": uid,
                 "value": value,
                 "createdAt": vote_snap.get("createdAt") if vote_snap.exists else firestore.SERVER_TIMESTAMP,
                 "updatedAt": firestore.SERVER_TIMESTAMP,
