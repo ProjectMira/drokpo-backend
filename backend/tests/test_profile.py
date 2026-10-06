@@ -56,6 +56,16 @@ def test_update_profile_accepts_blank_instagram(client, monkeypatch):
     assert captured["payload"].socials.instagram == ""
 
 
+def test_update_profile_toggles_discoverable(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.users.update_profile", lambda uid, payload: captured.update(payload=payload)
+    )
+    response = client.patch("/api/profile/me", json={"discoverable": False})
+    assert response.status_code == 200
+    assert captured["payload"].discoverable is False
+
+
 def test_add_photo(client, monkeypatch):
     monkeypatch.setattr(
         "app.services.storage.ensure_download_url", lambda path: f"https://cdn.example/{path}"

@@ -54,6 +54,14 @@ def test_update_profile_blank_social_deletes_field(monkeypatch):
     assert doc.last_update["socials.instagram"] is users_service.firestore.DELETE_FIELD
 
 
+def test_update_profile_writes_discoverable_false(monkeypatch):
+    # False must reach Firestore — not be dropped as "unset" like None.
+    doc = StubDocRef()
+    monkeypatch.setattr(users_service, "get_firestore", lambda: StubDB(doc))
+    users_service.update_profile("u1", ProfileUpdate(discoverable=False))
+    assert doc.last_update["discoverable"] is False
+
+
 def test_update_profile_empty_payload_writes_nothing(monkeypatch):
     doc = StubDocRef()
     monkeypatch.setattr(users_service, "get_firestore", lambda: StubDB(doc))
@@ -205,6 +213,17 @@ def test_rank_candidates_unlimited_radius_keeps_everyone(monkeypatch):
     result = users_service._rank_candidates(FeedStubDB(), "me", _searcher(), pool, None, 20)
     assert [c["uid"] for c in result] == ["far"]
     assert result[0]["distanceKm"] > 300
+
+
+def test_rank_candidates_skips_profiles_hidden_from_discover(monkeypatch):
+    monkeypatch.setattr(users_service, "_blocked_uids", lambda db, uid: set())
+    pool = {
+        "hidden": _candidate(28.75, 77.25, discoverable=False),
+        "shown": _candidate(28.75, 77.25, discoverable=True),
+        "legacy": _candidate(28.75, 77.25),  # no field yet → discoverable
+    }
+    result = users_service._rank_candidates(FeedStubDB(), "me", _searcher(), pool, 50, 20)
+    assert sorted(c["uid"] for c in result) == ["legacy", "shown"]
 
 
 class FakeDoc:

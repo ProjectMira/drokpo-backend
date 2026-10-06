@@ -109,6 +109,9 @@ class ProfileUpdate(BaseModel):
     socials: SocialsUpdate | None = None
     location: Location | None = None  # geohash is recomputed server-side
     preferences: PreferencesUpdate | None = None
+    # False hides the profile from every swipe deck; matches and chats are
+    # unaffected. A missing field means discoverable (every existing profile).
+    discoverable: bool | None = None
 
     @field_validator("answers")
     @classmethod

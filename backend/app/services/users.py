@@ -315,6 +315,8 @@ def _rank_candidates(
     for cand_uid, data in pool.items():
         if cand_uid in swiped_ids or cand_uid in excluded:
             continue
+        if data.get("discoverable") is False:  # opted out of Discover
+            continue
         if not _within_age(data.get("dob"), age_min, age_max):
             continue
         distance_km = None
