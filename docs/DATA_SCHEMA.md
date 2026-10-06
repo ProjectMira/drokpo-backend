@@ -52,7 +52,7 @@ The profile document. One per Firebase Auth account, created by `POST /onboardin
 | `dob` | string | onboarding, profile update | Plain ISO date string (`"1998-04-12"`), not a Firestore Timestamp |
 | `gender` | string \| null | onboarding, profile update | Optional profile info — not used to filter the feed |
 | `interests` | array\<string\> | onboarding, profile update | Free-text tags (e.g. "momo cooking", "gorshey", "hiking") — drives the feed's shared-interest ranking in `get_candidates` |
-| `socials` | map `{ instagram: string, youtube?, tiktok?, facebook?, x?, wechat? }` | onboarding, profile update | `instagram` is **required** at onboarding and can be changed but never cleared (validated in [user.py](../backend/app/models/user.py)); other platforms are optional. Partial updates merge via dotted paths (`socials.youtube`) so omitted platforms are untouched |
+| `socials` | map `{ instagram?, youtube?, tiktok?, facebook?, x?, wechat? }` | onboarding, profile update | Every platform is optional (see [user.py](../backend/app/models/user.py)); on a profile update an explicit `""` deletes that handle. Partial updates merge via dotted paths (`socials.youtube`) so omitted platforms are untouched |
 | `bio` | string | onboarding, profile update | |
 | `occupation` | string | onboarding, profile update | Current job / profession |
 | `education` | string | onboarding, profile update | Education level (e.g. "Bachelor's", "Monastic education") |

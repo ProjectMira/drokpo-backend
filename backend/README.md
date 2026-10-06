@@ -32,7 +32,7 @@ All routes are mounted under `/api` (e.g. `GET /api/profile/me`, `POST /api/swip
 | Messages | `POST /api/matches/{matchId}/messages`, `GET /api/matches/{matchId}/messages` (paginated with `before`), `POST /api/matches/{matchId}/read`, `GET /api/messages/sent` |
 | Safety | `POST /api/reports`, `POST`/`DELETE /api/blocks/{uid}` |
 
-Profiles carry a `socials` map (`instagram`, `youtube`, `tiktok`, `facebook`, `x`, `wechat`) — **Instagram is required** at onboarding and can be changed but never cleared; the rest are optional.
+Profiles carry a `socials` map (`instagram`, `youtube`, `tiktok`, `facebook`, `x`, `wechat`) — all optional; sending `""` for a handle on a profile update clears it.
 
 ## Tests
 

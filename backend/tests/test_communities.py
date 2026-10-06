@@ -34,8 +34,7 @@ def test_create_community_rejects_non_https_website(client, community_onboarding
 
 
 def test_create_community_socials_has_no_required_handle(client, community_onboarding_payload, monkeypatch):
-    # Unlike a person's onboarding (where Instagram is required), a community
-    # may supply a partial socials object with no handle at all.
+    # A community may supply a partial socials object with no handle at all.
     captured = {}
     monkeypatch.setattr("app.services.users.get_profile", lambda uid: None)
     monkeypatch.setattr("app.services.communities.community_exists", lambda uid: False)

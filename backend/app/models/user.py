@@ -7,7 +7,7 @@ class Location(BaseModel):
 
 
 class Socials(BaseModel):
-    instagram: str  # required — the one social handle every profile must have
+    instagram: str | None = None
     youtube: str | None = None
     tiktok: str | None = None
     facebook: str | None = None
@@ -16,11 +16,11 @@ class Socials(BaseModel):
 
     @field_validator("instagram")
     @classmethod
-    def instagram_not_blank(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("instagram handle is required")
-        return v
+    def instagram_blank_is_none(cls, v: str | None) -> str | None:
+        # Optional — plenty of members have no Instagram. A blank is "none".
+        if v is None:
+            return None
+        return v.strip() or None
 
 
 class SocialsUpdate(BaseModel):
@@ -33,10 +33,8 @@ class SocialsUpdate(BaseModel):
 
     @field_validator("instagram")
     @classmethod
-    def instagram_not_blank(cls, v: str | None) -> str | None:
-        # instagram can be changed but never cleared — it's the required social.
-        if v is not None and not v.strip():
-            raise ValueError("instagram handle cannot be empty")
+    def instagram_strip(cls, v: str | None) -> str | None:
+        # An explicit "" means "clear it" (the update services delete the field).
         return v.strip() if v is not None else None
 
 
@@ -87,7 +85,7 @@ class OnboardingIn(BaseModel):
     languages: list[str] = Field(default_factory=list)
     interests: list[str] = Field(default_factory=list)  # e.g. momo cooking, gorshey, hiking
     answers: dict[str, str] = Field(default_factory=dict)  # profile Q&A prompts
-    socials: Socials  # instagram required; other platforms optional
+    socials: Socials  # every platform optional
     location: Location
     preferences: Preferences = Field(default_factory=Preferences)
 

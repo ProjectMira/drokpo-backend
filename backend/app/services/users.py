@@ -80,7 +80,14 @@ def update_profile(uid: str, payload: ProfileUpdate) -> None:
     location = data.pop("location", None)
     updates = {k: v for k, v in data.items() if v is not None}
     updates.update({f"preferences.{k}": v for k, v in prefs.items() if v is not None})
-    updates.update({f"socials.{k}": v for k, v in socials.items() if v is not None})
+    # An emptied social handle ("") deletes the stored value.
+    updates.update(
+        {
+            f"socials.{k}": firestore.DELETE_FIELD if v == "" else v
+            for k, v in socials.items()
+            if v is not None
+        }
+    )
     if location is not None:
         # Location is replaced as a whole; the geohash is always derived
         # server-side so a client can't desync it from lat/lng.

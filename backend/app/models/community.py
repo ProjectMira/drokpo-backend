@@ -77,14 +77,11 @@ class CommunityOnboardingIn(BaseModel):
     phone: str | None = None
     # Required (unlike a person's onboarding, where it's optional profile
     # info) — the approval-notification email (docs/COMMUNITIES.md) needs
-    # somewhere to go, and never clearable once set, same as a person's
-    # required Instagram handle.
+    # somewhere to go, and never clearable once set.
     email: str
     contactPerson: ContactPerson
     address: Address
-    # Unlike a person's onboarding, no social handle is required here — a
-    # community may have none at all, so this uses the all-optional shape
-    # rather than the person Socials model (which requires instagram).
+    # No social handle is required — a community may have none at all.
     socials: SocialsUpdate | None = None
 
     @field_validator("name")
@@ -159,8 +156,7 @@ class CommunityUpdate(BaseModel):
     @field_validator("email")
     @classmethod
     def email_not_blank(cls, v: str | None) -> str | None:
-        # Can be changed but never cleared — same convention as a person's
-        # Instagram handle (SocialsUpdate.instagram_not_blank).
+        # Can be changed but never cleared.
         if v is None:
             return None
         return _valid_email(v)

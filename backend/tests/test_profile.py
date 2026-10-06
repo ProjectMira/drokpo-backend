@@ -45,9 +45,15 @@ def test_update_profile_all_fields_editable(client, monkeypatch):
     assert payload.preferences.distanceKm == 100
 
 
-def test_update_profile_rejects_blank_instagram(client):
+def test_update_profile_accepts_blank_instagram(client, monkeypatch):
+    # "" clears the handle (users_service deletes the field).
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.users.update_profile", lambda uid, payload: captured.update(payload=payload)
+    )
     response = client.patch("/api/profile/me", json={"socials": {"instagram": ""}})
-    assert response.status_code == 422
+    assert response.status_code == 200
+    assert captured["payload"].socials.instagram == ""
 
 
 def test_add_photo(client, monkeypatch):

@@ -68,8 +68,8 @@ def get_public_communities(uids: list[str]) -> dict[str, dict]:
 
 # Optional fields the client may erase: an explicit "" in the PATCH body
 # deletes the stored value. Anything not listed here either has a validator
-# rejecting blanks (name, description, email, contactPerson.name,
-# socials.instagram) or is required-at-onboarding (address.city/country),
+# rejecting blanks (name, description, email, contactPerson.name) or is
+# required-at-onboarding (address.city/country),
 # so a stray "" for those is dropped as "no change" rather than deleting.
 CLEARABLE_FIELDS = frozenset(
     {
@@ -81,6 +81,7 @@ CLEARABLE_FIELDS = frozenset(
         "address.line1",
         "address.state",
         "address.postalCode",
+        "socials.instagram",
         "socials.youtube",
         "socials.tiktok",
         "socials.facebook",

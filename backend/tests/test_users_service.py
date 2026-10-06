@@ -47,6 +47,13 @@ def test_update_profile_flattens_and_recomputes_geohash(monkeypatch):
     assert "socials" not in updates
 
 
+def test_update_profile_blank_social_deletes_field(monkeypatch):
+    doc = StubDocRef()
+    monkeypatch.setattr(users_service, "get_firestore", lambda: StubDB(doc))
+    users_service.update_profile("u1", ProfileUpdate(socials=SocialsUpdate(instagram="")))
+    assert doc.last_update["socials.instagram"] is users_service.firestore.DELETE_FIELD
+
+
 def test_update_profile_empty_payload_writes_nothing(monkeypatch):
     doc = StubDocRef()
     monkeypatch.setattr(users_service, "get_firestore", lambda: StubDB(doc))

@@ -35,14 +35,25 @@ def test_onboarding_requires_socials(client, onboarding_payload):
     assert client.post("/api/onboarding", json=payload).status_code == 422
 
 
-def test_onboarding_requires_instagram(client, onboarding_payload):
-    payload = onboarding_payload(socials={"youtube": "TenzinVlogs"})
-    assert client.post("/api/onboarding", json=payload).status_code == 422
+def test_onboarding_without_instagram(client, onboarding_payload, monkeypatch):
+    # Instagram is optional — members without an account can still sign up.
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.users.create_profile", lambda uid, payload: captured.update(payload=payload)
+    )
+    payload = onboarding_payload(socials={})
+    assert client.post("/api/onboarding", json=payload).status_code == 200
+    assert captured["payload"].socials.instagram is None
 
 
-def test_onboarding_rejects_blank_instagram(client, onboarding_payload):
+def test_onboarding_blank_instagram_is_none(client, onboarding_payload, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.users.create_profile", lambda uid, payload: captured.update(payload=payload)
+    )
     payload = onboarding_payload(socials={"instagram": "   "})
-    assert client.post("/api/onboarding", json=payload).status_code == 422
+    assert client.post("/api/onboarding", json=payload).status_code == 200
+    assert captured["payload"].socials.instagram is None
 
 
 def test_onboarding_accepts_optional_socials(client, onboarding_payload, monkeypatch):
