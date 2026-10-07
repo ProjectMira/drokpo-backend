@@ -105,10 +105,18 @@ def _tokens_for(db, uids: list[str]) -> list[str]:
 def _send(tokens: list[str], title: str, body: str, data: dict[str, str] | None = None) -> None:
     if not tokens:
         return
+    # Explicit APNs alert configuration is important for iOS: relying on the
+    # Android-oriented defaults can yield a delivered FCM message with no
+    # audible/banner presentation. The app's UNUserNotificationCenter delegate
+    # handles foreground presentation and tap routing.
     messaging.send_each_for_multicast(
         messaging.MulticastMessage(
             notification=messaging.Notification(title=title, body=body),
             data=data or {},
+            apns=messaging.APNSConfig(
+                headers={"apns-priority": "10", "apns-push-type": "alert"},
+                payload=messaging.APNSPayload(aps=messaging.Aps(sound="default")),
+            ),
             tokens=tokens,
         )
     )
